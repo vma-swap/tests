@@ -139,6 +139,25 @@ int get_swapfile_count( ){
     }
     return count;
 }
+//a
+int get_swapfile_path(void *addr, char *path_out) {
+    struct swap_path_args args = {0};
+    args.virtual_address = addr;
+    int fd = open(DEVICE, O_RDONLY);
+    if (fd < 0) {
+        perror("open");
+        return -1;
+    }
+    if (ioctl(fd, IOCTL_GET_SWAPFILE_PATH, &args) < 0) {
+        perror("Failed to get swapfile path");
+        close(fd);
+        return -1;
+    }
+    close(fd);
+    strncpy(path_out, args.path, 256);
+    return 0;
+}
+//a
 unsigned int is_folio_seq(void *addr) {
     struct folio_info_args args = {0};
     args.virtual_address = addr;

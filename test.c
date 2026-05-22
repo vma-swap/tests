@@ -11,7 +11,7 @@
 // REGISTER_TEST(test_multiple_swapfiles);
 // REGISTER_TEST(test_multiple_swapfiles2);
 // REGISTER_TEST(test_vma_si_allcation);
-REGISTER_TEST(test_vma_si_allcation_large);
+//REGISTER_TEST(test_vma_si_allcation_large);
 // REGISTER_TEST(test_stack_vma_offset);
 // REGISTER_TEST(test_stack_vma_enlarge);
 // REGISTER_TEST(test_available_swapfile);
@@ -25,6 +25,7 @@ REGISTER_TEST(test_vma_si_allcation_large);
 // REGISTER_TEST(test_seq_alloc);
 // REGISTER_TEST(test_large_seq_alloc);
 // REGISTER_TEST(test_random_alloc);
+REGISTER_TEST(test_swapfile_path);
 
 // Memory-limited tests that trigger swapping
 // REGISTER_MEMORY_TEST(test_vma_reclaim_window, "4M");
@@ -153,6 +154,30 @@ void test_vma_si_allcation(void) {
         ASSERT_EQ(vma_has_swap_info(addr + (i * PAGE_SIZE)), 1);
     }
 }
+//
+void test_check_swapfile(void) {
+    make_swaps(1, 0);
+    char *addr = map_anon_region(PAGE_SIZE);
+    ASSERT(addr != NULL);
+    swapout_page(addr);
+    ASSERT(get_swapfile_count() == 0);
+}
+
+void test_swapfile_path(void) {
+    make_swaps(1, 0);
+    
+    char *addr = map_anon_region(PAGE_SIZE);
+    ASSERT(addr != NULL);
+    addr[0] = 42;
+    swapout_page(addr);
+    
+    char returned_path[256];
+    int ret = get_swapfile_path(addr, returned_path);
+    ASSERT(ret == 0);
+    printf("Swap file path from kernel: %s\n", returned_path);
+    ASSERT(strstr(returned_path, "/scratch/vma_swaps/swapfile_") != NULL);
+}
+//
 
 void test_vma_si_allcation_large(void) {
     make_swaps(1, 0);
