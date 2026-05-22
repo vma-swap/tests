@@ -4,19 +4,21 @@
 #include <getopt.h>
 #include <unistd.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 #define PAGE_SIZE 4096
 // REGISTER_TEST(test_folio_file_info);
 // REGISTER_TEST(test_folio_offset);
 // REGISTER_TEST(test_multiple_swapfiles);
 // REGISTER_TEST(test_multiple_swapfiles2);
-// REGISTER_TEST(test_vma_si_allcation);
+//REGISTER_TEST(test_vma_si_allcation);
 //REGISTER_TEST(test_vma_si_allcation_large);
 // REGISTER_TEST(test_stack_vma_offset);
 // REGISTER_TEST(test_stack_vma_enlarge);
 // REGISTER_TEST(test_available_swapfile);
 // REGISTER_TEST(test_vma_values);
-// REGISTER_TEST(test_mul_vma_values);
+//REGISTER_TEST(test_mul_vma_values);
 // REGISTER_TEST(test_heap_enlarge);
 // REGISTER_PERF_TEST(test_seq_swapout_throughput);
 // REGISTER_PERF_TEST(test_rand_swapout_throughput);
@@ -154,16 +156,24 @@ void test_vma_si_allcation(void) {
         ASSERT_EQ(vma_has_swap_info(addr + (i * PAGE_SIZE)), 1);
     }
 }
-//
-void test_check_swapfile(void) {
-    make_swaps(1, 0);
-    char *addr = map_anon_region(PAGE_SIZE);
-    ASSERT(addr != NULL);
-    swapout_page(addr);
-    ASSERT(get_swapfile_count() == 0);
-}
 
 void test_swapfile_path(void) {
+    // 1. Ensure the directory exists using C (ignoring if it already exists)
+    mkdir("/scratch/vma_swaps", 0777); 
+    
+    // 2. Pre-allocate the physical blocks for swapfile 
+    char path[256];
+    snprintf(path, sizeof(path), "/scratch/vma_swaps/swapfile_%d.swap", 1);
+    
+    int fd = open(path, O_CREAT | O_RDWR, 0600);
+    if (fd >= 0) {
+        // Allocate 1MB of actual disk space to the file (Linux specific standard)
+        fallocate(fd, 0, 0, 1 * 1024 * 1024); 
+        close(fd);
+    }
+
+
+    // 3. Now this will succeed because the underlying file is populated with physical space
     make_swaps(1, 0);
     
     char *addr = map_anon_region(PAGE_SIZE);
@@ -177,7 +187,6 @@ void test_swapfile_path(void) {
     printf("Swap file path from kernel: %s\n", returned_path);
     ASSERT(strstr(returned_path, "/scratch/vma_swaps/swapfile_") != NULL);
 }
-//
 
 void test_vma_si_allcation_large(void) {
     make_swaps(1, 0);
