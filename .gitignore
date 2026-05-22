@@ -18,3 +18,4 @@
 # Traces and temporary test output
 /*.trace
 /memory_test_*
+swpctl_module.ko

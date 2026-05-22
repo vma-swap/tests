@@ -10,122 +10,228 @@
 
 #define PAGE_SIZE 4096
 
-REGISTER_TEST(test_anon_vma);
+REGISTER_TEST(test_single_anon_vma);
+REGISTER_TEST(test_fork_anon_vma);
+REGISTER_TEST(test_count_rmap_vmas);
 
-void test_anon_vma(void) {
+void test_single_anon_vma(void) {
     char *addr = mmap(NULL, PAGE_SIZE * 10, PROT_READ | PROT_WRITE,
                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     ASSERT(addr != MAP_FAILED);
     if (addr == MAP_FAILED)
         return;
-
+    for (int i = 0; i < 10; i++) {
+        struct anon_vma_info_args anon_vma_info = get_anon_vma_info(addr + (i * PAGE_SIZE));
+        ASSERT_EQ(anon_vma_info.anon_vma, NULL);
+    }
     addr[0] = 1;
-
-    struct anon_vma_info_args parent_before = get_anon_vma_info(addr);
-    ASSERT_NEQ(parent_before.anon_vma, NULL);
-    ASSERT_NEQ(parent_before.root, NULL);
-
-    int child_info_pipe[2];
-    int release_pipe[2];
-    if (pipe(child_info_pipe) < 0 || pipe(release_pipe) < 0) {
-        perror("pipe");
-        ASSERT(0);
-        return;
+    struct anon_vma_info_args first_anon_vma_info = get_anon_vma_info(addr);
+    for (int i = 1; i < 10; i++) {
+        addr[i * PAGE_SIZE] = i;
+        struct anon_vma_info_args anon_vma_info = get_anon_vma_info(addr + (i * PAGE_SIZE));
+        ASSERT_EQ(anon_vma_info.anon_vma, first_anon_vma_info.anon_vma);
+        ASSERT_EQ(anon_vma_info.root, first_anon_vma_info.anon_vma);
+        ASSERT_EQ(anon_vma_info.parent, first_anon_vma_info.anon_vma);
+        ASSERT_EQ(anon_vma_info.num_children, 1);
+        ASSERT_EQ(anon_vma_info.num_active_vmas, 1);
     }
-
-    pid_t pid = fork();
-    if (pid < 0) {
-        perror("fork");
-        ASSERT(0);
-        close(child_info_pipe[0]);
-        close(child_info_pipe[1]);
-        close(release_pipe[0]);
-        close(release_pipe[1]);
-        return;
-    }
-
-    if (pid == 0) {
-        close(child_info_pipe[0]);
-        close(release_pipe[1]);
-
-        struct anon_vma_info_args child_info = get_anon_vma_info(addr);
-        ASSERT_NEQ(child_info.anon_vma, NULL);
-        ASSERT_NEQ(child_info.root, NULL);
-        ASSERT_EQ(child_info.root, parent_before.root);
-        ASSERT_NEQ(child_info.anon_vma, parent_before.anon_vma);
-        ASSERT_EQ(child_info.vma_start, parent_before.vma_start);
-        ASSERT_EQ(child_info.vma_end, parent_before.vma_end);
-
-        if (write(child_info_pipe[1], &child_info, sizeof(child_info)) !=
-            (ssize_t)sizeof(child_info)) {
-            close(child_info_pipe[1]);
-            close(release_pipe[0]);
-            _exit(EXIT_FAILURE);
-        }
-
-        char token;
-        if (read(release_pipe[0], &token, sizeof(token)) != sizeof(token)) {
-            close(child_info_pipe[1]);
-            close(release_pipe[0]);
-            _exit(EXIT_FAILURE);
-        }
-
-        close(child_info_pipe[1]);
-        close(release_pipe[0]);
-        _exit(current_test_failed ? EXIT_FAILURE : EXIT_SUCCESS);
-    }
-
-    close(child_info_pipe[1]);
-    close(release_pipe[0]);
-
-    struct anon_vma_info_args child_info = {0};
-    ssize_t bytes_read = read(child_info_pipe[0], &child_info, sizeof(child_info));
-    ASSERT_EQ(bytes_read, (ssize_t)sizeof(child_info));
-    close(child_info_pipe[0]);
-
-    ASSERT_NEQ(child_info.anon_vma, NULL);
-    ASSERT_EQ(child_info.root, parent_before.root);
-    ASSERT_NEQ(child_info.anon_vma, parent_before.anon_vma);
-
-    struct anon_vma_info_args parent_after_child = get_anon_vma_info(addr);
-    ASSERT_EQ(parent_after_child.anon_vma, parent_before.anon_vma);
-    ASSERT_EQ(parent_after_child.root, parent_before.root);
-
-    struct rmap_walk_args rmap = get_rmap_walk_info(addr);
-    int saw_parent_vma = 0;
-    int saw_child_vma = 0;
-    printf("rmap folio=%p nr_vmas=%u total_vmas=%u overflow=%u\n",
-           rmap.folio_ptr, rmap.nr_vmas, rmap.total_vmas, rmap.overflow);
-    for (unsigned int i = 0; i < rmap.nr_vmas; i++) {
-        printf("rmap[%u] vma=%p addr=%lx range=%lx-%lx anon_vma=%p flags=%lx\n",
-               i, rmap.vmas[i].vma_ptr, rmap.vmas[i].address,
-               rmap.vmas[i].vma_start, rmap.vmas[i].vma_end,
-               rmap.vmas[i].anon_vma, rmap.vmas[i].vm_flags);
-        saw_parent_vma |= rmap.vmas[i].vma_ptr == parent_before.vma_ptr;
-        saw_child_vma |= rmap.vmas[i].vma_ptr == child_info.vma_ptr;
-    }
-    ASSERT_NEQ(rmap.folio_ptr, NULL);
-    ASSERT_ABOVE(rmap.total_vmas, 1);
-    ASSERT(saw_parent_vma);
-    ASSERT(saw_child_vma);
-
-    char token = 1;
-    ASSERT_EQ(write(release_pipe[1], &token, sizeof(token)), (ssize_t)sizeof(token));
-    close(release_pipe[1]);
-
-    int status;
-    ASSERT_EQ(waitpid(pid, &status, 0), pid);
-    ASSERT(WIFEXITED(status));
-    ASSERT_EQ(WEXITSTATUS(status), EXIT_SUCCESS);
-
-    printf("parent anon_vma=%p root=%p parent=%p children=%lu active=%lu\n",
-           parent_before.anon_vma, parent_before.root, parent_before.parent,
-           parent_before.num_children, parent_before.num_active_vmas);
-    printf("child anon_vma=%p root=%p parent=%p children=%lu active=%lu\n",
-           child_info.anon_vma, child_info.root, child_info.parent,
-           child_info.num_children, child_info.num_active_vmas);
 }
 
+void test_fork_anon_vma(void) {
+    char *addr = mmap(NULL, PAGE_SIZE * 4, PROT_READ | PROT_WRITE,
+                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED)
+        return;
+    addr[0] = 1;     // will be shared
+    addr[PAGE_SIZE] = 2;  // will be cowed by child
+    addr[PAGE_SIZE * 2] = 3;  // will be cowed by parent
+    //addr[PAGE_SIZE * 3]     // will be allocated by each
+    struct anon_vma_info_args parent_original = get_anon_vma_info(addr);
+    if (fork()){
+        sleep(1); // to make sure son already finished his code
+        //checks on the shared page
+        struct anon_vma_info_args page_1 = get_anon_vma_info(addr);
+        ASSERT_EQ(page_1.anon_vma, parent_original.anon_vma);
+        ASSERT(page_1.anon_vma != NULL);
+        ASSERT_EQ(page_1.root, parent_original.anon_vma);
+        ASSERT_EQ(page_1.parent, parent_original.anon_vma);
+        ASSERT_EQ(page_1.num_children, 3);
+        ASSERT_EQ(page_1.num_active_vmas, 0);
+        //checks on page that the child cowed, identical to page 1
+        struct anon_vma_info_args page_2 = get_anon_vma_info(addr + PAGE_SIZE);
+        ASSERT_EQ(page_2.anon_vma, parent_original.anon_vma);
+        ASSERT(page_2.anon_vma != NULL);
+        ASSERT_EQ(page_2.root, parent_original.anon_vma);
+        ASSERT_EQ(page_2.parent, parent_original.anon_vma);
+        ASSERT_EQ(page_2.num_children, 3);
+        ASSERT_EQ(page_2.num_active_vmas, 0);
+        //checks on page that the parent cowed
+        addr[PAGE_SIZE * 2]++;
+        struct anon_vma_info_args page_3 = get_anon_vma_info(addr + PAGE_SIZE * 2);
+        ASSERT(page_3.anon_vma != parent_original.anon_vma);
+        ASSERT(page_3.anon_vma != NULL);
+        ASSERT_EQ(page_3.root, parent_original.anon_vma);
+        ASSERT_EQ(page_3.parent, parent_original.anon_vma);
+        ASSERT_EQ(page_3.num_children, 0);
+        ASSERT_EQ(page_3.num_active_vmas, 1);
+        //checks on page that the parent allocated
+        addr[PAGE_SIZE * 3] = 4;
+        struct anon_vma_info_args page_4 = get_anon_vma_info(addr + PAGE_SIZE * 3);
+        ASSERT_EQ(page_4.anon_vma, page_3.anon_vma);
+        ASSERT(page_4.anon_vma != NULL);
+        ASSERT_EQ(page_4.root, parent_original.anon_vma);
+        ASSERT_EQ(page_4.parent, parent_original.anon_vma);
+        ASSERT_EQ(page_4.num_children, 0);
+        ASSERT_EQ(page_4.num_active_vmas, 1);
+    }
+    else {
+        //checks on the shared page
+        struct anon_vma_info_args page_1 = get_anon_vma_info(addr);
+        ASSERT_EQ(page_1.anon_vma, parent_original.anon_vma);
+        ASSERT(page_1.anon_vma != NULL);
+        ASSERT_EQ(page_1.root, parent_original.anon_vma);
+        ASSERT_EQ(page_1.parent, parent_original.anon_vma);
+        ASSERT_EQ(page_1.num_children, 3);
+        ASSERT_EQ(page_1.num_active_vmas, 0);
+        //checks on page that the child cowed, private to the child
+        addr[PAGE_SIZE]++;
+        struct anon_vma_info_args page_2 = get_anon_vma_info(addr + PAGE_SIZE);
+        ASSERT(page_2.anon_vma != parent_original.anon_vma);
+        ASSERT(page_2.anon_vma != NULL);
+        ASSERT_EQ(page_2.root, parent_original.anon_vma);
+        ASSERT_EQ(page_2.parent, parent_original.anon_vma);
+        ASSERT_EQ(page_2.num_children, 0);
+        ASSERT_EQ(page_2.num_active_vmas, 1);
+        //checks on page that the parent cowed
+        struct anon_vma_info_args page_3 = get_anon_vma_info(addr + PAGE_SIZE*2);
+        ASSERT_EQ(page_3.anon_vma, parent_original.anon_vma);
+        ASSERT(page_3.anon_vma != NULL);
+        ASSERT_EQ(page_3.root, parent_original.anon_vma);
+        ASSERT_EQ(page_3.parent, parent_original.anon_vma);
+        ASSERT_EQ(page_3.num_children, 3);
+        ASSERT_EQ(page_3.num_active_vmas, 0);
+        //checks on page that the child allocated
+        addr[PAGE_SIZE * 3] = 4;
+        struct anon_vma_info_args page_4 = get_anon_vma_info(addr + PAGE_SIZE * 3);
+        ASSERT_EQ(page_4.anon_vma, page_2.anon_vma);
+        ASSERT(page_4.anon_vma != NULL);
+        ASSERT_EQ(page_4.root, parent_original.anon_vma);
+        ASSERT_EQ(page_4.parent, parent_original.anon_vma);
+        ASSERT_EQ(page_4.num_children, 0);
+        ASSERT_EQ(page_4.num_active_vmas, 1);
+        sleep(1.5);
+        exit(0);
+    }
+
+}
+
+void test_count_rmap_vmas(void) {
+    char *addr = mmap(NULL, PAGE_SIZE * 4, PROT_READ | PROT_WRITE,
+                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED)
+        return;
+    addr[0] = 1;     // will be shared
+    addr[PAGE_SIZE] = 2;  // will be cowed by child
+    addr[PAGE_SIZE * 2] = 3;  // will be cowed by parent
+    //addr[PAGE_SIZE * 3]     // will be allocated by each
+    ASSERT_EQ(count_rmap_vmas(addr), 1);
+    if (fork()){
+        sleep(1); // to make sure son already finished his code
+        //checks on the shared page
+        ASSERT_EQ(count_rmap_vmas(addr), 2);
+        //checks on page that the child cowed, identical to page 1
+        ASSERT_EQ(count_rmap_vmas(addr + PAGE_SIZE), 2);
+        //checks on page that the parent cowed
+        addr[PAGE_SIZE * 2]++;
+        ASSERT_EQ(count_rmap_vmas(addr + PAGE_SIZE * 2), 1);
+        //checks on page that the parent allocated
+        addr[PAGE_SIZE * 3] = 4;
+        ASSERT_EQ(count_rmap_vmas(addr + PAGE_SIZE * 3), 1);
+    }
+    else {
+        //checks on the shared page
+        ASSERT_EQ(count_rmap_vmas(addr), 2);
+        //checks on page that the child cowed, private to the child
+        addr[PAGE_SIZE]++;
+        ASSERT_EQ(count_rmap_vmas(addr + PAGE_SIZE), 1);
+        //checks on page that the parent cowed
+        ASSERT_EQ(count_rmap_vmas(addr + PAGE_SIZE * 2), 2);
+        //checks on page that the child allocated
+        addr[PAGE_SIZE * 3] = 4;
+        ASSERT_EQ(count_rmap_vmas(addr + PAGE_SIZE * 3), 1);
+        sleep(1.5);
+        exit(0);
+    }
+
+}
+void test_mulcount_rmap_vmas_multi_fork(void) {
+    char *addr = mmap(NULL, PAGE_SIZE * 4, PROT_READ | PROT_WRITE,
+                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED)
+        return;
+    addr[0] = 1;     // will be shared
+    addr[PAGE_SIZE] = 2;  // will be cowed by child
+    addr[PAGE_SIZE * 2] = 3;  // will be cowed by parent
+    //addr[PAGE_SIZE * 3]     // will be allocated by each
+    ASSERT_EQ(count_rmap_vmas(addr), 1);
+    if (fork()){
+        sleep(1); // to make sure son already finished his code
+        //checks on the shared page
+        ASSERT_EQ(count_rmap_vmas(addr), 3);
+        //checks on page that the child cowed, identical to page 1
+        ASSERT_EQ(count_rmap_vmas(addr + PAGE_SIZE), 3);
+        //checks on page that the parent cowed
+        addr[PAGE_SIZE * 2]++;
+        ASSERT_EQ(count_rmap_vmas(addr + PAGE_SIZE * 2), 1);
+        //checks on page that the parent allocated
+        addr[PAGE_SIZE * 3] = 4;
+        ASSERT_EQ(count_rmap_vmas(addr + PAGE_SIZE * 3), 1);
+        if(!fork()) {
+            sleep(1.5);
+            exit(0);
+        }
+        //checks on the shared page
+        ASSERT_EQ(count_rmap_vmas(addr), 3);
+        //checks on page that the child cowed, identical to page 1
+        ASSERT_EQ(count_rmap_vmas(addr + PAGE_SIZE), 3);
+        //checks on page that the parent cowed
+        addr[PAGE_SIZE * 2]++;
+        ASSERT_EQ(count_rmap_vmas(addr + PAGE_SIZE * 2), 1);
+        //checks on page that the parent allocated
+        ASSERT_EQ(count_rmap_vmas(addr + PAGE_SIZE * 3), 2);
+    }
+    else {
+        //checks on the shared page
+        ASSERT_EQ(count_rmap_vmas(addr), 2);
+        //checks on page that the child cowed, private to the child
+        addr[PAGE_SIZE]++;
+        ASSERT_EQ(count_rmap_vmas(addr + PAGE_SIZE), 1);
+        //checks on page that the parent cowed
+        ASSERT_EQ(count_rmap_vmas(addr + PAGE_SIZE * 2), 2);
+        //checks on page that the child allocated
+        addr[PAGE_SIZE * 3] = 4;
+        ASSERT_EQ(count_rmap_vmas(addr + PAGE_SIZE * 3), 1);
+        if(!fork()) {
+            sleep(1.5);
+            exit(0);
+        }
+        sleep(1.5);
+        //checks on the shared page
+        ASSERT_EQ(count_rmap_vmas(addr), 4);
+        //checks on page that the child cowed, private to the child
+        addr[PAGE_SIZE]++;
+        ASSERT_EQ(count_rmap_vmas(addr + PAGE_SIZE), 1);
+        //checks on page that the parent cowed
+        ASSERT_EQ(count_rmap_vmas(addr + PAGE_SIZE * 2), 4);
+        //checks on page that the child allocated
+        ASSERT_EQ(count_rmap_vmas(addr + PAGE_SIZE * 3), 2);
+        exit(0);
+    }
+
+}
 static void print_usage(char *argv0) {
     printf("Usage: %s [--trace]\n", argv0);
 }

@@ -18,7 +18,7 @@
 #define ICOTL_FOLIO_LRU_INFO _IOR('s', 0x03, struct folio_info_args)
 #define ICOTL_GET_CURRENT_CGROUP _IOR('s', 0x04, unsigned short)
 #define IOCTL_ANON_VMA_INFO _IOR('s', 0x05, struct anon_vma_info_args)
-#define ICOTL_RMAP_WALK _IOR('s', 0x06, struct rmap_walk_args)
+#define ICOTL_COUNT_RMAP_VMAS _IOWR('s', 0x06, struct rmap_walk_args)
 
 struct vma_info_args {
     void *virtual_address;
@@ -29,9 +29,6 @@ struct vma_info_args {
 };
 struct anon_vma_info_args {
     void *virtual_address;
-    unsigned long vma_start;
-    unsigned long vma_end;
-    void *vma_ptr;
     void *anon_vma;
     void *root;
     void *parent;
@@ -49,11 +46,7 @@ struct rmap_vma_info {
 };
 struct rmap_walk_args {
     void *virtual_address;
-    void *folio_ptr;
     unsigned int nr_vmas;
-    unsigned int total_vmas;
-    unsigned int overflow;
-    struct rmap_vma_info vmas[RMAP_WALK_MAX_VMAS];
 };
 struct folio_info_args {
     unsigned int is_seq;
@@ -67,23 +60,8 @@ struct folio_info_args {
 static bool swapctl_rmap_one(struct folio *folio, struct vm_area_struct *vma,
                              unsigned long addr, void *arg)
 {
-    struct rmap_walk_args *args = arg;
-    unsigned int idx = args->nr_vmas;
-
-    args->total_vmas++;
-    if (idx >= RMAP_WALK_MAX_VMAS) {
-        args->overflow = 1;
-        return true;
-    }
-
-    args->vmas[idx].vma_ptr = vma;
-    args->vmas[idx].vma_start = vma->vm_start;
-    args->vmas[idx].vma_end = vma->vm_end;
-    args->vmas[idx].address = addr;
-    args->vmas[idx].vm_flags = vma->vm_flags;
-    args->vmas[idx].anon_vma = vma->anon_vma;
-    args->nr_vmas++;
-
+    unsigned int *nr_vmas = arg;
+    (*nr_vmas)++;
     return true;
 }
 
@@ -119,7 +97,6 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
     }
     case IOCTL_ANON_VMA_INFO: {
         struct anon_vma_info_args args;
-        struct vm_area_struct *vma;
         struct anon_vma *anon_vma;
         unsigned long addr;
 
@@ -127,17 +104,19 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
             return -EFAULT;
 
         addr = (unsigned long)args.virtual_address;
-        mmap_read_lock(current->mm);
-        vma = find_vma(current->mm, addr);
-        if (!vma || addr < vma->vm_start) {
-            mmap_read_unlock(current->mm);
+        struct page *page = NULL;
+        int ret = get_user_pages_fast((unsigned long)args.virtual_address, 1, 0, &page);
+        if (ret != 1) {
+            pr_err("swapctl: Failed to get page for user address %px (ret=%d)\n",
+                args.virtual_address, ret);
+            return -EFAULT;
+        }
+        struct folio* folio = page_folio(page);
+        if(!folio) {
+            pr_err("swapctl: Invalid folio for address %px\n", args.virtual_address);
             return -EINVAL;
         }
-
-        args.vma_start = vma->vm_start;
-        args.vma_end = vma->vm_end;
-        args.vma_ptr = vma;
-        anon_vma = vma->anon_vma;
+        anon_vma = folio_get_anon_vma(folio);
         args.anon_vma = anon_vma;
         args.root = NULL;
         args.parent = NULL;
@@ -153,16 +132,18 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
             args.num_children = anon_vma->num_children;
             args.num_active_vmas = anon_vma->num_active_vmas;
             anon_vma_unlock_read(anon_vma);
+            if (atomic_dec_and_test(&anon_vma->refcount))
+		        __put_anon_vma(anon_vma);
         }
-        mmap_read_unlock(current->mm);
 
         if (copy_to_user((void __user *)arg, &args, sizeof(args)))
             return -EFAULT;
 
         return 0;
     }
-    case ICOTL_RMAP_WALK: {
-        struct rmap_walk_args *args;
+    case ICOTL_COUNT_RMAP_VMAS: {
+        struct rmap_walk_args args;
+        unsigned int nr_vmas = 0;
         struct page *page = NULL;
         struct folio *folio;
         struct rmap_walk_control rwc = {
@@ -170,46 +151,31 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
         };
         int ret;
 
-        args = kzalloc(sizeof(*args), GFP_KERNEL);
-        if (!args)
-            return -ENOMEM;
-
-        if (copy_from_user(args, (void __user *)arg, sizeof(*args))) {
-            kfree(args);
+        if (copy_from_user(&args, (void __user *)arg, sizeof(args)))
             return -EFAULT;
-        }
 
-        rwc.arg = args;
-        args->folio_ptr = NULL;
-        args->nr_vmas = 0;
-        args->total_vmas = 0;
-        args->overflow = 0;
+        rwc.arg = &nr_vmas;
 
-        ret = get_user_pages_fast((unsigned long)args->virtual_address, 1, 0, &page);
+        ret = get_user_pages_fast((unsigned long)args.virtual_address, 1, 0, &page);
         if (ret != 1) {
             pr_err("swapctl: Failed to get page for user address %px (ret=%d)\n",
-                   args->virtual_address, ret);
-            kfree(args);
+                   args.virtual_address, ret);
             return -EFAULT;
         }
 
         folio = page_folio(page);
         if (!folio) {
             put_page(page);
-            kfree(args);
             return -EINVAL;
         }
 
-        args->folio_ptr = folio;
         rmap_walk(folio, &rwc);
         put_page(page);
 
-        if (copy_to_user((void __user *)arg, args, sizeof(*args))) {
-            kfree(args);
+        args.nr_vmas = nr_vmas;
+        if (copy_to_user((void __user *)arg, &args, sizeof(args)))
             return -EFAULT;
-        }
 
-        kfree(args);
         return 0;
     }
     case ICOTL_FOLIO_LRU_INFO: {

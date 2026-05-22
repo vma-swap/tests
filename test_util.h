@@ -19,9 +19,6 @@ struct vma_info_args {
 
 struct anon_vma_info_args {
     void *virtual_address;
-    unsigned long vma_start;
-    unsigned long vma_end;
-    void *vma_ptr;
     void *anon_vma;
     void *root;
     void *parent;
@@ -41,20 +38,16 @@ struct rmap_vma_info {
 
 struct rmap_walk_args {
     void *virtual_address;
-    void *folio_ptr;
     unsigned int nr_vmas;
-    unsigned int total_vmas;
-    unsigned int overflow;
-    struct rmap_vma_info vmas[RMAP_WALK_MAX_VMAS];
 };
 
 #define IOCTL_VMA_INFO _IOR('s', 0x02, struct vma_info_args)
 #define IOCTL_ANON_VMA_INFO _IOR('s', 0x05, struct anon_vma_info_args)
-#define ICOTL_RMAP_WALK _IOR('s', 0x06, struct rmap_walk_args)
+#define ICOTL_COUNT_RMAP_VMAS _IOWR('s', 0x06, struct rmap_walk_args)
 
 struct vma_info_args get_vma_info(void *addr);
 struct anon_vma_info_args get_anon_vma_info(void *addr);
-struct rmap_walk_args get_rmap_walk_info(void *addr);
+unsigned int count_rmap_vmas(void *addr);
 
 pid_t start_ftrace(void);
 void stop_ftrace(char *test_name, pid_t pid);

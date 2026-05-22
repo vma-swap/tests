@@ -42,18 +42,17 @@ struct anon_vma_info_args get_anon_vma_info(void *addr) {
     return args;
 }
 
-struct rmap_walk_args get_rmap_walk_info(void *addr) {
-    struct rmap_walk_args args = {0};
-    args.virtual_address = addr;
-
+unsigned int count_rmap_vmas(void *addr) {
     int fd = open_swapctl();
     if (fd < 0)
-        return args;
+        return 0;
 
-    if (ioctl(fd, ICOTL_RMAP_WALK, &args) < 0)
-        perror("Failed to walk folio rmap");
+    struct rmap_walk_args args = {0};
+    args.virtual_address = addr;
+    if (ioctl(fd, ICOTL_COUNT_RMAP_VMAS, &args) < 0)
+        perror("Failed to count rmap vmas");
     close(fd);
-    return args;
+    return args.nr_vmas;
 }
 
 pid_t start_ftrace(void) {

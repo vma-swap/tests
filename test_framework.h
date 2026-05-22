@@ -39,26 +39,49 @@ static int current_test_failed = 0;
 } while (0)
 
 #define ASSERT_EQ(a, b) do { \
-    if ((a) != (b)) { \
-        fprintf(stderr, COLOR_RED "FAIL" COLOR_RESET " [%s:%d] %s == %s (%lx != %lx)\n", \
-                __FILE__, __LINE__, #a, #b, (unsigned long)(a), (unsigned long)(b)); \
+    __auto_type _assert_a = (a); \
+    __auto_type _assert_b = (b); \
+    unsigned long long _assert_a_hex = (unsigned long long)_assert_a; \
+    unsigned long long _assert_b_hex = (unsigned long long)_assert_b; \
+    if (_assert_a_hex != _assert_b_hex) { \
+        fprintf(stderr, COLOR_RED "FAIL" COLOR_RESET \
+                " [%s:%d] %s == %s\n" \
+                "  left:  0x%llx\n" \
+                "  right: 0x%llx\n", \
+                __FILE__, __LINE__, #a, #b, \
+                _assert_a_hex, _assert_b_hex); \
         current_test_failed = 1; \
     } \
 } while (0)
 
 #define ASSERT_NEQ(a, b) do { \
-    if ((a) == (b)) { \
-        fprintf(stderr, COLOR_RED "FAIL" COLOR_RESET " [%s:%d] %s != %s (%lx == %lx)\n", \
-                __FILE__, __LINE__, #a, #b, (unsigned long)(a), (unsigned long)(b)); \
+    __auto_type _assert_a = (a); \
+    __auto_type _assert_b = (b); \
+    unsigned long long _assert_a_hex = (unsigned long long)_assert_a; \
+    unsigned long long _assert_b_hex = (unsigned long long)_assert_b; \
+    if (_assert_a_hex == _assert_b_hex) { \
+        fprintf(stderr, COLOR_RED "FAIL" COLOR_RESET \
+                " [%s:%d] %s != %s\n" \
+                "  left:  0x%llx\n" \
+                "  right: 0x%llx\n", \
+                __FILE__, __LINE__, #a, #b, \
+                _assert_a_hex, _assert_b_hex); \
         current_test_failed = 1; \
     } \
 } while (0)
 
 #define ASSERT_ABOVE(a, b) do { \
-    if ((a) <= (b)) { \
-        fprintf(stderr, COLOR_RED "FAIL" COLOR_RESET " [%s:%d] %s > %s (%llu <= %llu)\n", \
+    __auto_type _assert_a = (a); \
+    __auto_type _assert_b = (b); \
+    unsigned long long _assert_a_hex = (unsigned long long)_assert_a; \
+    unsigned long long _assert_b_hex = (unsigned long long)_assert_b; \
+    if (_assert_a_hex <= _assert_b_hex) { \
+        fprintf(stderr, COLOR_RED "FAIL" COLOR_RESET \
+                " [%s:%d] %s > %s\n" \
+                "  left:  0x%llx\n" \
+                "  right: 0x%llx\n", \
                 __FILE__, __LINE__, #a, #b, \
-                (unsigned long long)(a), (unsigned long long)(b)); \
+                _assert_a_hex, _assert_b_hex); \
         current_test_failed = 1; \
     } \
 } while (0)
