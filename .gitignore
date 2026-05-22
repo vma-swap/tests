@@ -1,0 +1,20 @@
+# Userspace build output
+/test_runner
+
+# Kernel module build output
+*.ko
+*.mod
+*.mod.c
+*.mod.o
+/*.o
+/Module.symvers
+/modules.order
+/.tmp_versions/
+/.cache.mk
+/.modules.order.cmd
+/.Module.symvers.cmd
+/.*.cmd
+
+# Traces and temporary test output
+/*.trace
+/memory_test_*
