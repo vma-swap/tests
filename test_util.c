@@ -229,6 +229,43 @@ unsigned short get_folio_memcg_id(void *addr) {
     return args.memory_cgroup;
 }
 
+struct anon_vma_info_args get_anon_vma_info(void *addr) {
+    struct anon_vma_info_args args = {0};
+    args.virtual_address = addr;
+
+    int fd = open(DEVICE, O_RDONLY);
+    if (fd < 0) {
+        perror("open");
+        return args;
+    }
+    if (ioctl(fd, IOCTL_ANON_VMA_INFO, &args) < 0) {
+        perror("Failed to get anon_vma info");
+    }
+    close(fd);
+    return args;
+}
+
+unsigned long get_anon_vma_from_vma(void *addr) {
+    struct anon_vma_info_args args = get_anon_vma_info(addr);
+    return (unsigned long)args.anon_vma;
+}
+
+struct rmap_walk_args get_rmap_walk_info(void *addr) {
+    struct rmap_walk_args args = {0};
+    args.virtual_address = addr;
+
+    int fd = open(DEVICE, O_RDONLY);
+    if (fd < 0) {
+        perror("open");
+        return args;
+    }
+    if (ioctl(fd, ICOTL_RMAP_WALK, &args) < 0) {
+        perror("Failed to walk folio rmap");
+    }
+    close(fd);
+    return args;
+}
+
 int get_swap_offset_from_page(void *addr) {
     struct swap_info_args args = {0};
     args.virtual_address = addr;

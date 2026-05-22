@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 
+#define RMAP_WALK_MAX_VMAS 64
+
 struct vma_info_args {
     void *virtual_address;
     unsigned long vma_start;
@@ -21,6 +23,37 @@ struct vma_info_args {
 	size_t swap_ahead_size; 
 };
 
+struct anon_vma_info_args {
+    void *virtual_address;
+    unsigned long vma_start;
+    unsigned long vma_end;
+    void *vma_ptr;
+    void *anon_vma;
+    void *root;
+    void *parent;
+    unsigned long refcount;
+    unsigned long num_children;
+    unsigned long num_active_vmas;
+};
+
+struct rmap_vma_info {
+    void *vma_ptr;
+    unsigned long vma_start;
+    unsigned long vma_end;
+    unsigned long address;
+    unsigned long vm_flags;
+    void *anon_vma;
+};
+
+struct rmap_walk_args {
+    void *virtual_address;
+    void *folio_ptr;
+    unsigned int nr_vmas;
+    unsigned int total_vmas;
+    unsigned int overflow;
+    struct rmap_vma_info vmas[RMAP_WALK_MAX_VMAS];
+};
+
 #define DEVICE "/dev/swapctl"
 #define IOCTL_GET_SWAPFILE_COUNT _IOR('s', 0x01, int)
 #define IOCTL_GET_SWAP_OFFSET_FROM_PAGE _IOR('s', 0x02, unsigned long)
@@ -29,6 +62,8 @@ struct vma_info_args {
 #define IOCTL_IS_FOLIO_SEQ _IOR('s', 0x05, struct folio_info_args)
 #define ICOTL_FOLIO_LRU_INFO _IOR('s', 0x06, struct folio_info_args)
 #define ICOTL_GET_CURRENT_CGROUP _IOR('s', 0x07, unsigned short)
+#define IOCTL_ANON_VMA_INFO _IOR('s', 0x08, struct anon_vma_info_args)
+#define ICOTL_RMAP_WALK _IOR('s', 0x09, struct rmap_walk_args)
 #define DIV_ROUND_UP(n, d) (((n) + (d) - 1) / (d))
 
 unsigned int is_folio_seq(void *addr);
@@ -51,6 +86,9 @@ void* map_large_anon_region(unsigned long long size);
 pid_t start_ftrace(void);
 void stop_ftrace(char* test_name, pid_t pid);
 struct vma_info_args get_vma_info(void *addr);
+struct anon_vma_info_args get_anon_vma_info(void *addr);
+unsigned long get_anon_vma_from_vma(void *addr);
+struct rmap_walk_args get_rmap_walk_info(void *addr);
 void set_minimal_swapfile_num(int num);
 void start_measurement(void);
 //return time in micro
