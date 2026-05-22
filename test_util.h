@@ -32,6 +32,11 @@ struct vma_info_args {
 #define IOCTL_GET_SWAPFILE_PATH _IOWR('s', 0x08, struct swap_path_args)
 #define DIV_ROUND_UP(n, d) (((n) + (d) - 1) / (d))
 
+struct swap_path_args {
+    void *virtual_address;
+    char path[256];
+};
+
 unsigned int is_folio_seq(void *addr);
 unsigned int is_folio_anon(void *addr);
 unsigned int is_folio_file(void *addr);
