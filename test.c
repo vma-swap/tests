@@ -6,6 +6,8 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <sys/wait.h>
+
 
 #define PAGE_SIZE 4096
 // REGISTER_TEST(test_folio_file_info);
@@ -28,6 +30,7 @@
 // REGISTER_TEST(test_large_seq_alloc);
 // REGISTER_TEST(test_random_alloc);
 REGISTER_TEST(test_swapfile_path);
+//REGISTER_TEST(test_swapfile_path_after_fork_cow);
 
 // Memory-limited tests that trigger swapping
 // REGISTER_MEMORY_TEST(test_vma_reclaim_window, "4M");
@@ -187,6 +190,62 @@ void test_swapfile_path(void) {
     printf("Swap file path from kernel: %s\n", returned_path);
     ASSERT(strstr(returned_path, "/scratch/vma_swaps/swapfile_") != NULL);
 }
+
+/*void test_swapfile_path_after_fork_cow(void) {
+    make_swaps(2, 0);
+    char *addr = map_anon_region(PAGE_SIZE);
+    ASSERT(addr != NULL);
+    addr[0] = 42;
+    pid_t pid = fork();
+    ASSERT(pid >= 0);
+
+    if (pid == 0) {
+         //Child process. This write should trigger Copy-On-Write.
+ 
+        addr[0] = 99;
+
+        ASSERT(addr[0] == 99);
+
+        swapout_page(addr);
+
+        char returned_path[256];
+        int ret = get_swapfile_path(addr, returned_path);
+
+        ASSERT(ret == 0);
+
+        printf("Child swap file path from kernel: %s\n", returned_path);
+
+        ASSERT(strstr(returned_path, "/scratch/vma_swaps/swapfile_") != NULL);
+
+        _exit(0);
+    }
+
+
+     //Parent process. The child wrote 99, but parent should still see 42. This verifies that COW really happened.
+
+    ASSERT(addr[0] == 42);
+
+    int status;
+    waitpid(pid, &status, 0);
+
+    ASSERT(WIFEXITED(status));
+    ASSERT(WEXITSTATUS(status) == 0);
+    
+
+     //Optional: also test parent page after child COW.
+
+    addr[0] = 42;  
+    swapout_page(addr);
+
+    char returned_path[256];
+    int ret = get_swapfile_path(addr, returned_path);
+
+    ASSERT(ret == 0);
+
+    printf("Parent swap file path from kernel: %s\n", returned_path);
+
+    ASSERT(strstr(returned_path, "/scratch/vma_swaps/swapfile_") != NULL);
+}*/
 
 void test_vma_si_allcation_large(void) {
     make_swaps(1, 0);

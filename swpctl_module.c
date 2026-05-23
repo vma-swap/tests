@@ -221,7 +221,6 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
             return -EFAULT;
         return 0;
     }
-    //a
     case IOCTL_GET_SWAPFILE_PATH: {
         struct swap_path_args args;
         struct vm_area_struct *vma;
@@ -272,9 +271,7 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 
         return 0;
     }
-    //a
-    default:
-        return -EINVAL;
+
 }
 }
 static const struct file_operations swapctl_fops = {
