@@ -30,7 +30,7 @@
 // REGISTER_TEST(test_large_seq_alloc);
 // REGISTER_TEST(test_random_alloc);
 REGISTER_TEST(test_swapfile_path);
-//REGISTER_TEST(test_swapfile_path_after_fork_cow);
+REGISTER_TEST(test_basic_no_cow);
 
 // Memory-limited tests that trigger swapping
 // REGISTER_MEMORY_TEST(test_vma_reclaim_window, "4M");
@@ -191,8 +191,12 @@ void test_swapfile_path(void) {
     ASSERT(strstr(returned_path, "/scratch/vma_swaps/swapfile_") != NULL);
 }
 
-void test_cow(void) {
-    
+void test_basic_no_cow(void) {
+    char *addr = map_anon_region(PAGE_SIZE);
+    ASSERT(addr != NULL);
+    int ret = get_anon_vmas(addr,returned_page_anon_vma, returned_vma_anon_vma);
+    ASSERT(ret == 0);
+    ASSERT(returned_page_anon_vma == retruned_vma_anon_vma);  
 }
 
 void test_vma_si_allcation_large(void) {

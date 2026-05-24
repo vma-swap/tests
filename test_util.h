@@ -37,6 +37,12 @@ struct swap_path_args {
     char path[256];
 };
 
+struct anon_vmas_cow_args {
+    void *virtual_address;
+    void *page_anon_vma;
+    void *vma_anon_vma;
+};
+
 unsigned int is_folio_seq(void *addr);
 unsigned int is_folio_anon(void *addr);
 unsigned int is_folio_file(void *addr);

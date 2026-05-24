@@ -139,7 +139,7 @@ int get_swapfile_count( ){
     }
     return count;
 }
-//a
+
 int get_swapfile_path(void *addr, char *path_out) {
     struct swap_path_args args = {0};
     args.virtual_address = addr;
@@ -157,7 +157,26 @@ int get_swapfile_path(void *addr, char *path_out) {
     strncpy(path_out, args.path, 256);
     return 0;
 }
-//a
+
+int get_anon_vmas(void *addr, void **page_anon_vma_out, void **vma_anon_vma_out) {
+    struct anon_vmas_cow_args args = {0};
+    args.virtual_address = addr;
+    int fd = open(DEVICE, O_RDONLY);
+    if (fd < 0) {
+        perror("open");
+        return -1;
+    }
+    if (ioctl(fd, IOCTL_GET_ANON_VMAS, &args) < 0) {
+        perror("Failed to get VMA info");
+        close(fd);
+        return -1;
+    }
+    close(fd);
+    *page_anon_vma_out = args.page_anon_vma;
+    *vma_anon_vma_out = args.vma_anon_vma;
+    return 0;
+}
+
 unsigned int is_folio_seq(void *addr) {
     struct folio_info_args args = {0};
     args.virtual_address = addr;

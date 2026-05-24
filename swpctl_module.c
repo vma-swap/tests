@@ -63,6 +63,7 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
             return -EFAULT;
 
         // lock current->mm for reading
+        // current => macro that returns task_struct
         mmap_read_lock(current->mm);
         struct vm_area_struct *vma = find_vma(current->mm, (unsigned long)args.virtual_address);
         if (!vma)
@@ -265,6 +266,38 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
         strncpy(args.path, path_str, sizeof(args.path) - 1);
         args.path[sizeof(args.path) - 1] = '\0';
         kfree(tmp_path);
+
+        if (copy_to_user((void __user *)arg, &args, sizeof(args)))
+            return -EFAULT;
+
+        return 0;
+    }
+    case IOCTL_GET_ANON_VMAS: {
+        struct anon_vmas_cow_args args;
+        struct page *page = NULL;
+        struct folio *folio = NULL;
+        struct anon_vma *anon_vma = NULL;
+
+        if (copy_from_user(&args, (void __user *)arg, sizeof(args)))
+            return -EFAULT;
+
+        mmap_read_lock(current->mm);
+        //gotta pin the addr from userspace so it doesnt slip
+        //use this to fetch page from addr and then folio from page
+        int retu = get_user_pages_fast((unsigned long)args.virtual_address, 1, 0, &page);
+        if (retu == 1){
+            folio = page_folio(page);
+            args.page_anon_vma = folio_get_anon_vma(folio);
+            vma = find_vma(current->mm, (unsigned long)args.virtual_address);
+            if (!vma) {
+                mmap_read_unlock(current->mm);
+                return -EINVAL;
+            }
+            args.vma_anon_vma = vma_get_anon_vma(vma);
+            //unpin
+            put_page(page);
+        }
+        mmap_read_unlock(current->mm);
 
         if (copy_to_user((void __user *)arg, &args, sizeof(args)))
             return -EFAULT;
