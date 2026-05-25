@@ -193,10 +193,61 @@ void test_swapfile_path(void) {
 
 void test_basic_no_cow(void) {
     char *addr = map_anon_region(PAGE_SIZE);
+    // should we page fault to ensure allocation here?
     ASSERT(addr != NULL);
     int ret = get_anon_vmas(addr,returned_page_anon_vma, returned_vma_anon_vma);
     ASSERT(ret == 0);
-    ASSERT(returned_page_anon_vma == retruned_vma_anon_vma);  
+    ASSERT(returned_page_anon_vma == returned_vma_anon_vma);  
+}
+
+void test_cow(void){
+
+    // assumption - retrival of anon_vma through vma - gives the "list" from the drawing of the process
+    // "groud truth"
+
+    char *addr = map_anon_region(4*PAGE_SIZE);
+    ASSERT(addr != NULL);
+    // allocation of the first 3
+    for (int i = 0; i < 3; i++) {
+        addr[i*PAGE_SIZE] = i;
+    }
+    int ret0 = get_anon_vmas(addr[0],returned_page0_anon_vma, returned_vma_anon_vma);
+    int ret1 = get_anon_vmas(addr[PAGE_SIZE],returned_page1_anon_vma, returned_vma_anon_vma);
+    int ret2 = get_anon_vmas(addr[2*PAGE_SIZE],returned_page2_anon_vma, returned_vma_anon_vma);
+    ASSERT(ret0 == 0 && ret1 == 0 && ret2 == 0);
+    ASSERT(returned_page0_anon_vma == returned_vma_anon_vma);
+    ASSERT(returned_page1_anon_vma == returned_vma_anon_vma);
+    ASSERT(returned_page2_anon_vma == returned_vma_anon_vma);
+    //fork
+    pid_t pid = fork();
+    if (pid == 0) {
+        // child
+        // cow on 2nd page
+        addr[PAGE_SIZE] = 42;
+        // allocate on 4th page
+        addr[3*PAGE_SIZE] = 84;
+        int ret2_star = get_anon_vmas(addr[PAGE_SIZE],returned_page2_star_anon_vma, returned_vma_anon_vma_child);
+        int ret4_star = get_anon_vmas(addr[3*PAGE_SIZE],returned_page4_star_anon_vma, returned_vma_anon_vma_child);
+        ASSERT(ret2_star == 0 && ret4_star == 0);
+        ASSERT(returned_page2_star_anon_vma == returned_vma_anon_vma_child);
+        ASSERT(returned_page4_star_anon_vma == returned_vma_anon_vma_child);
+        ASSERT(retrurned_vma_anon_vma_child != returned_vma_anon_vma);
+        exit(0);
+    }
+    else {
+        //parent
+        //cow on the 3rd page
+        wait(NULL);
+        addr[2*PAGE_SIZE] = 21;
+        //allocate on 4th page
+        addr[3*PAGE_SIZE] = 84;
+        int ret3_tilda = get_anon_vmas(addr[2*PAGE_SIZE],returned_page3_tilda_anon_vma, returned_vma_anon_vma_parent);
+        int ret4_tilda = get_anon_vmas(addr[3*PAGE_SIZE],returned_page4_tilda_anon_vma, returned_vma_anon_vma_parent);
+        ASSERT(ret3_tilda == 0 && ret4_tilda == 0);
+        ASSERT(returned_page3_tilda_anon_vma == returned_vma_anon_vma_parent);
+        ASSERT(returned_page4_tilda_anon_vma == returned_vma_anon_vma_parent);
+        ASSERT(returned_vma_anon_vma_parent != returned_vma_anon_vma);
+    }
 }
 
 void test_vma_si_allcation_large(void) {

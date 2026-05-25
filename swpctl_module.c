@@ -276,7 +276,6 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
         struct anon_vmas_cow_args args;
         struct page *page = NULL;
         struct folio *folio = NULL;
-        struct anon_vma *anon_vma = NULL;
 
         if (copy_from_user(&args, (void __user *)arg, sizeof(args)))
             return -EFAULT;
@@ -288,6 +287,7 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
         if (retu == 1){
             folio = page_folio(page);
             args.page_anon_vma = folio_get_anon_vma(folio);
+
             vma = find_vma(current->mm, (unsigned long)args.virtual_address);
             if (!vma) {
                 mmap_read_unlock(current->mm);
