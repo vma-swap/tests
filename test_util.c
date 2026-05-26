@@ -55,6 +55,20 @@ unsigned int count_rmap_vmas(void *addr) {
     return args.nr_vmas;
 }
 
+struct swap_file_info get_swap_file_info(void *addr) {
+    struct swap_file_info args = {0};
+    args.virtual_address = addr;
+
+    int fd = open_swapctl();
+    if (fd < 0)
+        return args;
+
+    if (ioctl(fd, IOCTL_GET_SWAP_FILE_PATH, &args) < 0)
+        perror("Failed to get swap file info");
+    close(fd);
+    return args;
+}
+
 pid_t start_ftrace(void) {
     pid_t pid = fork();
 

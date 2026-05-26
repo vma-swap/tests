@@ -10,6 +10,8 @@
 #include <linux/swapops.h>
 #include <linux/mm_inline.h>
 #include <linux/rmap.h>
+#include <linux/limits.h>
+#include <linux/string.h>
 
 #define DEVICE_NAME "swapctl"
 #define RMAP_WALK_MAX_VMAS 64
@@ -19,7 +21,14 @@
 #define ICOTL_GET_CURRENT_CGROUP _IOR('s', 0x04, unsigned short)
 #define IOCTL_ANON_VMA_INFO _IOR('s', 0x05, struct anon_vma_info_args)
 #define ICOTL_COUNT_RMAP_VMAS _IOWR('s', 0x06, struct rmap_walk_args)
+#define IOCTL_GET_SWAP_FILE_PATH _IOWR('s', 0x07, struct swap_file_info)
 
+struct swap_file_info {
+    void *virtual_address;
+    char path[PATH_MAX];
+    unsigned long offset;
+    unsigned long size;
+};
 struct vma_info_args {
     void *virtual_address;
     unsigned long vma_start;
@@ -182,13 +191,12 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
         struct folio_info_args args;
         if (copy_from_user(&args, (void __user *)arg, sizeof(args)))
             return -EFAULT;
-        printk(KERN_INFO "swapctl: Getting folio info for address 0x%lx\n", (unsigned long)args.virtual_address);
          // Pin the user page
 
         struct page *page = NULL;
         int ret = get_user_pages_fast((unsigned long)args.virtual_address, 1, 0, &page);
         if (ret != 1) {
-            pr_err("swapctl: Failed to get page for user address %px (ret=%d)\n", 
+            pr_err("swapctl: Failed to get page for user address %px (ret=%d)\n",
                 args.virtual_address, ret);
             return -EFAULT;
         }
@@ -205,7 +213,6 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
             args.memory_cgroup = mem_cgroup_id(memcg);
         }
         put_page(page); // ADD THIS LINE before return
-        printk(KERN_INFO "swapctl: Folio %px is_anon %u is_file %u has_mapping %u\n", folio, args.is_anon, args.is_file, args.has_mapping);
         if (copy_to_user((void __user *)arg, &args, sizeof(args)))
             return -EFAULT;
 
@@ -219,6 +226,87 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
         }
         if (copy_to_user((unsigned short __user *)arg, &memcg_id, sizeof(memcg_id)))
             return -EFAULT;
+        return 0;
+    }
+    case IOCTL_GET_SWAP_FILE_PATH: {
+        struct swap_file_info *args;
+        char *path_buf;
+        char *path;
+        struct page *page = NULL;
+        struct folio *folio;
+        struct anon_vma *anon_vma;
+        struct file *named_swap_file;
+        int ret;
+
+        args = kzalloc(sizeof(*args), GFP_KERNEL);
+        if (!args)
+            return -ENOMEM;
+
+        path_buf = kmalloc(PATH_MAX, GFP_KERNEL);
+        if (!path_buf) {
+            kfree(args);
+            return -ENOMEM;
+        }
+
+        if (copy_from_user(args, (void __user *)arg, sizeof(*args))) {
+            kfree(path_buf);
+            kfree(args);
+            return -EFAULT;
+        }
+
+        args->path[0] = '\0';
+        args->offset = 0;
+        args->size = 0;
+
+        ret = get_user_pages_fast((unsigned long)args->virtual_address, 1, 0, &page);
+        if (ret != 1) {
+            pr_err("swapctl: Failed to get page for user address %px (ret=%d)\n",
+                args->virtual_address, ret);
+            kfree(path_buf);
+            kfree(args);
+            return -EFAULT;
+        }
+        folio = page_folio(page);
+        if(!folio) {
+            pr_err("swapctl: Invalid folio for address %px\n", args->virtual_address);
+            put_page(page);
+            kfree(path_buf);
+            kfree(args);
+            return -EINVAL;
+        }
+        anon_vma = folio_get_anon_vma(folio);
+        if(!anon_vma) {
+            pr_err("swapctl: Invalid anon_vma for address %px\n", args->virtual_address);
+            put_page(page);
+            kfree(path_buf);
+            kfree(args);
+            return -EINVAL;
+        }
+        named_swap_file = anon_vma->named_swap_file;
+        if(named_swap_file) {
+            path = file_path(named_swap_file, path_buf, PATH_MAX);
+            if (IS_ERR(path)) {
+                if (atomic_dec_and_test(&anon_vma->refcount))
+                    __put_anon_vma(anon_vma);
+                put_page(page);
+                kfree(path_buf);
+                kfree(args);
+                return PTR_ERR(path);
+            }
+            strscpy(args->path, path, sizeof(args->path));
+            args->offset = folio->index << PAGE_SHIFT;
+            args->size = folio_size(folio);
+        }
+        if (atomic_dec_and_test(&anon_vma->refcount))
+            __put_anon_vma(anon_vma);
+        put_page(page);
+        if (copy_to_user((void __user *)arg, args, sizeof(*args))) {
+            kfree(path_buf);
+            kfree(args);
+            return -EFAULT;
+        }
+        kfree(path_buf);
+        kfree(args);
         return 0;
     }
     default:

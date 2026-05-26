@@ -7,12 +7,94 @@
 #include <sys/mman.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <string.h>
 
 #define PAGE_SIZE 4096
 
 REGISTER_TEST(test_single_anon_vma);
 REGISTER_TEST(test_fork_anon_vma);
 REGISTER_TEST(test_count_rmap_vmas);
+REGISTER_TEST(test_swap_file_creation);
+REGISTER_TEST(test_swap_file_delete_unmap);
+REGISTER_TEST(test_swap_file_delete_exit);
+
+void test_swap_file_delete_exit(void) {
+    char *addr = mmap(NULL, PAGE_SIZE * 2, PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED)
+        return;
+    addr[0] = 1;
+    struct swap_file_info swap_file_info = get_swap_file_info(addr);
+    ASSERT_NEQ(swap_file_info.path, NULL);
+    char expected_prefix[100];
+    struct anon_vma_info_args parent_anon_vma_info = get_anon_vma_info(addr);
+    sprintf(expected_prefix, "/.named_swap/%lx",(unsigned long)parent_anon_vma_info.anon_vma);
+    ASSERT_EQ(strncmp(swap_file_info.path, expected_prefix, strlen(expected_prefix)), 0);
+    if(fork()){
+        munmap(addr, PAGE_SIZE * 2);
+        ASSERT_NEQ(access(swap_file_info.path, F_OK), -1);
+        wait(NULL);
+        ASSERT_EQ(access(swap_file_info.path, F_OK), -1);
+    }
+    else {
+        sleep(1);
+        exit(0);
+    }
+}
+
+void test_swap_file_delete_unmap(void) {
+    char *addr = mmap(NULL, PAGE_SIZE * 2, PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED)
+        return;
+    addr[0] = 1;
+    struct swap_file_info swap_file_info = get_swap_file_info(addr);
+    ASSERT_NEQ(swap_file_info.path, NULL);
+    char expected_prefix[100];
+    struct anon_vma_info_args parent_anon_vma_info = get_anon_vma_info(addr);
+    sprintf(expected_prefix, "/.named_swap/%lx",(unsigned long)parent_anon_vma_info.anon_vma);
+    ASSERT_EQ(strncmp(swap_file_info.path, expected_prefix, strlen(expected_prefix)), 0);
+    munmap(addr, PAGE_SIZE * 2);
+    ASSERT_EQ(access(swap_file_info.path, F_OK), -1);
+}
+
+void test_swap_file_creation(void) {
+    char *addr = mmap(NULL, PAGE_SIZE * 2, PROT_READ | PROT_WRITE,
+                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED)
+        return;
+    //no swap file yet
+    struct swap_file_info swap_file_info = get_swap_file_info(addr);
+    ASSERT_NEQ(swap_file_info.path, NULL);
+    addr[0] = 1;
+    swap_file_info = get_swap_file_info(addr);
+    ASSERT_NEQ(swap_file_info.path, NULL);
+    char expected_prefix[100];
+    struct anon_vma_info_args parent_anon_vma_info = get_anon_vma_info(addr);
+    sprintf(expected_prefix, "/.named_swap/%lx",(unsigned long)parent_anon_vma_info.anon_vma);
+    ASSERT_EQ(strncmp(swap_file_info.path, expected_prefix, strlen(expected_prefix)), 0);
+    if(!fork()) {
+        addr[PAGE_SIZE] = 2;
+        //first the shared
+        swap_file_info = get_swap_file_info(addr);
+        struct anon_vma_info_args shared_anon_vma_info = get_anon_vma_info(addr);
+        ASSERT_NEQ(swap_file_info.path, NULL);
+        sprintf(expected_prefix, "/.named_swap/%lx",(unsigned long)shared_anon_vma_info.anon_vma);
+        ASSERT_EQ(strncmp(swap_file_info.path, expected_prefix, strlen(expected_prefix)), 0);
+        //now the private
+        swap_file_info = get_swap_file_info(addr + PAGE_SIZE);
+        struct anon_vma_info_args private_anon_vma_info = get_anon_vma_info(addr + PAGE_SIZE);
+        ASSERT_NEQ(swap_file_info.path, NULL);
+        ASSERT_NEQ(private_anon_vma_info.anon_vma, shared_anon_vma_info.anon_vma);
+        sprintf(expected_prefix, "/.named_swap/%lx",(unsigned long)private_anon_vma_info.anon_vma);
+        ASSERT_EQ(strncmp(swap_file_info.path, expected_prefix, strlen(expected_prefix)), 0);
+        exit(0);
+    }
+    wait(NULL);
+}
 
 void test_single_anon_vma(void) {
     char *addr = mmap(NULL, PAGE_SIZE * 10, PROT_READ | PROT_WRITE,
