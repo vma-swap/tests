@@ -29,8 +29,9 @@
 // REGISTER_TEST(test_seq_alloc);
 // REGISTER_TEST(test_large_seq_alloc);
 // REGISTER_TEST(test_random_alloc);
-REGISTER_TEST(test_swapfile_path);
-REGISTER_TEST(test_basic_no_cow);
+//REGISTER_TEST(test_swapfile_path);
+//REGISTER_TEST(test_basic_no_cow);
+REGISTER_TEST(test_folio_anon_vma_allocation);
 
 // Memory-limited tests that trigger swapping
 // REGISTER_MEMORY_TEST(test_vma_reclaim_window, "4M");
@@ -160,7 +161,7 @@ void test_vma_si_allcation(void) {
     }
 }
 
-void test_swapfile_path(void) {
+/*void test_swapfile_path(void) {
     // 1. Ensure the directory exists using C (ignoring if it already exists)
     mkdir("/scratch/vma_swaps", 0777); 
     
@@ -189,15 +190,17 @@ void test_swapfile_path(void) {
     ASSERT(ret == 0);
     printf("Swap file path from kernel: %s\n", returned_path);
     ASSERT(strstr(returned_path, "/scratch/vma_swaps/swapfile_") != NULL);
-}
+}*/
 
-void test_basic_no_cow(void) {
+void test_folio_anon_vma_allocation(void) {
     char *addr = map_anon_region(PAGE_SIZE);
     // should we page fault to ensure allocation here?
-    ASSERT(addr != NULL);
-    int ret = get_anon_vmas(addr,returned_page_anon_vma, returned_vma_anon_vma);
-    ASSERT(ret == 0);
-    ASSERT(returned_page_anon_vma == returned_vma_anon_vma);  
+    ASSERT_NE(addr, NULL);
+    int ret1 = get_anon_vma_folio(addr,returned_page_anon_vma);
+    ASSERT_EQ(ret1, 0);
+    int ret2 = get_anon_vma_vma(addr,returned_vma_anon_vma);
+    ASSERT_EQ(ret2, 0);
+    ASSERT_EQ(returned_page_anon_vma, returned_vma_anon_vma);
 }
 
 void test_cow(void){

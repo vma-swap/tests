@@ -30,18 +30,10 @@ struct vma_info_args {
 #define ICOTL_FOLIO_LRU_INFO _IOR('s', 0x06, struct folio_info_args)
 #define ICOTL_GET_CURRENT_CGROUP _IOR('s', 0x07, unsigned short)
 #define IOCTL_GET_SWAPFILE_PATH _IOWR('s', 0x08, struct swap_path_args)
+#define IOCTL_GET_ANON_VMA_FOLIO _IOR('s', 0x09, struct anon_vma_cow_folio_args)
+#define IOCTL_GET_ANON_VMA_VMA _IOR('s', 0x0A, struct anon_vma_cow_vma_args)
 #define DIV_ROUND_UP(n, d) (((n) + (d) - 1) / (d))
 
-struct swap_path_args {
-    void *virtual_address;
-    char path[256];
-};
-
-struct anon_vmas_cow_args {
-    void *virtual_address;
-    void *page_anon_vma;
-    void *vma_anon_vma;
-};
 
 unsigned int is_folio_seq(void *addr);
 unsigned int is_folio_anon(void *addr);

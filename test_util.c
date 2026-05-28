@@ -24,6 +24,21 @@ struct folio_info_args {
     unsigned short memory_cgroup;
 };
 
+struct swap_path_args {
+    void *virtual_address;
+    char path[256];
+};
+
+struct anon_vma_cow_folio_args {
+    void *virtual_address;
+    void *page_anon_vma;
+};
+
+struct anon_vma_cow_vma_args {
+    void *virtual_address;
+    void *vma_anon_vma;
+};
+
 #define PAGE_SIZE 4096
 #define TOTAL_SWAPFILES 232
 static int free_swapfile_index = 1;
@@ -158,21 +173,38 @@ int get_swapfile_path(void *addr, char *path_out) {
     return 0;
 }
 
-int get_anon_vmas(void *addr, void **page_anon_vma_out, void **vma_anon_vma_out) {
-    struct anon_vmas_cow_args args = {0};
+int get_anon_vma_folio(void *addr, void **page_anon_vma_out) {
+    struct anon_vma_cow_folio_args args = {0};
     args.virtual_address = addr;
     int fd = open(DEVICE, O_RDONLY);
     if (fd < 0) {
         perror("open");
         return -1;
     }
-    if (ioctl(fd, IOCTL_GET_ANON_VMAS, &args) < 0) {
+    if (ioctl(fd, IOCTL_GET_ANON_VMA_FOLIO, &args) < 0) {
         perror("Failed to get VMA info");
         close(fd);
         return -1;
     }
     close(fd);
     *page_anon_vma_out = args.page_anon_vma;
+    return 0;
+}
+
+int get_anon_vma_vma(void *addr, void **vma_anon_vma_out) {
+    struct anon_vma_cow_vma_args args = {0};
+    args.virtual_address = addr;
+    int fd = open(DEVICE, O_RDONLY);
+    if (fd < 0) {
+        perror("open");
+        return -1;
+    }
+    if (ioctl(fd, IOCTL_GET_ANON_VMA_VMA, &args) < 0) {
+        perror("Failed to get VMA info");
+        close(fd);
+        return -1;
+    }
+    close(fd);
     *vma_anon_vma_out = args.vma_anon_vma;
     return 0;
 }
