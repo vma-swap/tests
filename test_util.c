@@ -31,12 +31,12 @@ struct swap_path_args {
 
 struct anon_vma_cow_folio_args {
     void *virtual_address;
-    void *page_anon_vma;
+    unsigned long page_anon_vma;
 };
 
 struct anon_vma_cow_vma_args {
     void *virtual_address;
-    void *vma_anon_vma;
+    unsigned long vma_anon_vma;
 };
 
 #define PAGE_SIZE 4096
@@ -173,40 +173,38 @@ int get_swapfile_path(void *addr, char *path_out) {
     return 0;
 }
 
-int get_anon_vma_folio(void *addr, void **page_anon_vma_out) {
+unsigned long get_anon_vma_folio(void *addr) {
     struct anon_vma_cow_folio_args args = {0};
     args.virtual_address = addr;
     int fd = open(DEVICE, O_RDONLY);
     if (fd < 0) {
         perror("open");
-        return -1;
+        return 0; // Or handle error appropriately
     }
     if (ioctl(fd, IOCTL_GET_ANON_VMA_FOLIO, &args) < 0) {
         perror("Failed to get VMA info");
         close(fd);
-        return -1;
+        return 0; // Or handle error appropriately
     }
     close(fd);
-    *page_anon_vma_out = args.page_anon_vma;
-    return 0;
+    return args.page_anon_vma; // Return the unsigned long directly
 }
 
-int get_anon_vma_vma(void *addr, void **vma_anon_vma_out) {
+unsigned long get_anon_vma_vma(void *addr) {
     struct anon_vma_cow_vma_args args = {0};
     args.virtual_address = addr;
     int fd = open(DEVICE, O_RDONLY);
     if (fd < 0) {
         perror("open");
-        return -1;
+        return 0; // Or handle error appropriately
     }
     if (ioctl(fd, IOCTL_GET_ANON_VMA_VMA, &args) < 0) {
         perror("Failed to get VMA info");
         close(fd);
-        return -1;
+        return 0; // Or handle error appropriately
     }
     close(fd);
-    *vma_anon_vma_out = args.vma_anon_vma;
-    return 0;
+    return args.vma_anon_vma; // Return the unsigned long directly
 }
 
 unsigned int is_folio_seq(void *addr) {
@@ -449,7 +447,7 @@ void* map_anon_region(size_t size) {
         return NULL;
     }
     for (int i = 0; i < sz_in_pages; i++) {
-        addr[i*PAGE_SIZE] = i;
+        addr[i*PAGE_SIZE] = i; //should we not do on i = 0? the KSM problem
     }
     return addr;
 }

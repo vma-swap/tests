@@ -35,12 +35,12 @@ struct swap_info_args {
 
 struct anon_vma_cow_folio_args {
     void *virtual_address;
-    void *page_anon_vma;
+    unsigned long page_anon_vma;
 };
 
 struct anon_vma_cow_vma_args {
     void *virtual_address;
-    void *vma_anon_vma;
+    unsigned long vma_anon_vma;
 };
 
 struct vma_info_args {
@@ -298,15 +298,8 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
         int retu = get_user_pages_fast((unsigned long)args.virtual_address, 1, 0, &page);
         if (retu == 1){
             folio = page_folio(page);
-            args.page_anon_vma = folio_get_anon_vma(folio);
+            args.page_anon_vma = (unsigned long)folio_get_anon_vma(folio);
             //get more metadata from anon_vma
-
-            /*vma = find_vma(current->mm, (unsigned long)args.virtual_address);
-            if (!vma) {
-                mmap_read_unlock(current->mm);
-                return -EINVAL;
-            }
-            args.vma_anon_vma = vma_get_anon_vma(vma);*/
             //unpin
             put_page(page);
         }
@@ -331,7 +324,7 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
             mmap_read_unlock(current->mm);
             return -EINVAL;
         }
-        args.vma_anon_vma = vma_get_anon_vma(vma);
+        args.vma_anon_vma = (unsigned long)vma_get_anon_vma(vma);
         mmap_read_unlock(current->mm);
 
         if (copy_to_user((void __user *)arg, &args, sizeof(args)))

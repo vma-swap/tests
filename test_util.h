@@ -45,6 +45,8 @@ int get_current_memcg_id_fs(void);
 int evict_mem(int pages);
 int swapout_page(void *addr);
 int swapout_pages(void *addr, unsigned long long pages);
+unsigned long get_anon_vma_folio(void *addr);
+unsigned long get_anon_vma_vma(void *addr);
 int get_swapfile_count();
 int get_swap_offset_from_page(void *addr);
 void make_swaps(int num_swapfiles, int swap_flags);
