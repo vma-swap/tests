@@ -32,6 +32,8 @@ struct vma_info_args {
 #define IOCTL_GET_SWAPFILE_PATH _IOWR('s', 0x08, struct swap_path_args)
 #define IOCTL_GET_ANON_VMA_FOLIO _IOR('s', 0x09, struct anon_vma_cow_folio_args)
 #define IOCTL_GET_ANON_VMA_VMA _IOR('s', 0x0A, struct anon_vma_cow_vma_args)
+#define IOCTL_GET_RMAP_COUNT _IOWR('s', 0x0B, struct rmap_count_args)
+
 #define DIV_ROUND_UP(n, d) (((n) + (d) - 1) / (d))
 
 
@@ -47,6 +49,7 @@ int swapout_page(void *addr);
 int swapout_pages(void *addr, unsigned long long pages);
 unsigned long get_anon_vma_folio(void *addr);
 unsigned long get_anon_vma_vma(void *addr);
+int get_rmap_count(void *addr);
 int get_swapfile_count();
 int get_swap_offset_from_page(void *addr);
 void make_swaps(int num_swapfiles, int swap_flags);

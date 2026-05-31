@@ -61,7 +61,11 @@ static int current_test_failed = 0;  // Track current test failure state
         fprintf(stderr, COLOR_RED "FAIL" COLOR_RESET " [%s:%d] %s == %s (%lx != %lx)\n", \
                 __FILE__, __LINE__, #a, #b, (unsigned long)(a), (unsigned long)(b)); \
         current_test_failed = 1; \
+    } else { \
+        fprintf(stderr, COLOR_GREEN "PASS" COLOR_RESET " [%s:%d] %s == %s (%lx == %lx)\n", \
+                __FILE__, __LINE__, #a, #b, (unsigned long)(a), (unsigned long)(b)); \
     } \
+    fflush(stderr); \
 } while (0)
 
 #define ASSERT_NEQ(a, b) do { \
@@ -69,7 +73,11 @@ static int current_test_failed = 0;  // Track current test failure state
         fprintf(stderr, COLOR_RED "FAIL" COLOR_RESET " [%s:%d] %s != %s (%lx == %lx)\n", \
                 __FILE__, __LINE__, #a, #b, (unsigned long)(a), (unsigned long)(b)); \
         current_test_failed = 1; \
+    } else { \
+        fprintf(stderr, COLOR_GREEN "PASS" COLOR_RESET " [%s:%d] %s != %s (%lx != %lx)\n", \
+                __FILE__, __LINE__, #a, #b, (unsigned long)(a), (unsigned long)(b)); \
     } \
+    fflush(stderr); \
 } while (0)
 // should work on uint_64
 #define ASSERT_ABOVE(a, b) do { \

@@ -39,36 +39,17 @@ struct anon_vma_cow_vma_args {
     unsigned long vma_anon_vma;
 };
 
+struct rmap_count_args {
+    void *virtual_address;
+    int rmap_count;
+};
+
 #define PAGE_SIZE 4096
 #define TOTAL_SWAPFILES 232
 static int free_swapfile_index = 1;
 int is_measuring = 0;
 struct timespec start_time;
 
-void start_measurement(void) {
-    if (is_measuring) {
-        fprintf(stderr, "Measurement already started.\n");
-        exit(EXIT_FAILURE);
-    }
-    is_measuring = 1;
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    // printf("Starting measurement... at %llu ns\n", now.tv_sec * 1000000000ULL + now.tv_nsec);
-    clock_gettime(CLOCK_MONOTONIC, &start_time);
-}
-double stop_measurement(void) {
-    if (!is_measuring) {
-        fprintf(stderr, "Measurement not started.\n");
-        exit(EXIT_FAILURE);
-    }
-    is_measuring = 0;
-    struct timespec end_time;
-    clock_gettime(CLOCK_MONOTONIC, &end_time);
-    unsigned long long start_ns = start_time.tv_sec * 1000000000ULL + start_time.tv_nsec;
-    unsigned long long end_ns = end_time.tv_sec * 1000000000ULL + end_time.tv_nsec;
-    // printf("Stopping measurement... at %llu ns\n", end_ns);
-    return (double)(end_ns - start_ns) / 1000000000; // Convert to seconds
-}
 
 void set_minimal_swapfile_num(int num){
     if (num < 1 || num > TOTAL_SWAPFILES) {
@@ -129,31 +110,7 @@ void stop_ftrace(char* test_name, pid_t pid) {
     system(command);
     free(command);
 }
-int vma_has_swap_info(void *addr) {
-    struct swap_info_args args = {0};
-    args.has_swap_info = -1;
-    args.virtual_address = addr;
-    int fd = ioctl(open(DEVICE, O_RDONLY), IOCTL_VMA_HAS_SWAP_INFO, &args) < 0;
-    if (fd < 0) {
-        perror("Failed to check VMA swap info");
-        return -1;
-    }
-    close(fd);
-    return args.has_swap_info;
-}
-int get_swapfile_count( ){
-    int count;
-    int fd = open(DEVICE, O_RDONLY);
-    if (fd < 0) {
-        perror("open");
-        return 1;
-    }
-    if (ioctl(fd, IOCTL_GET_SWAPFILE_COUNT, &count) < 0) {
-        perror("Failed to get swapfile count");
-        return -1;
-    }
-    return count;
-}
+
 
 int get_swapfile_path(void *addr, char *path_out) {
     struct swap_path_args args = {0};
@@ -206,107 +163,24 @@ unsigned long get_anon_vma_vma(void *addr) {
     close(fd);
     return args.vma_anon_vma; // Return the unsigned long directly
 }
-
-unsigned int is_folio_seq(void *addr) {
-    struct folio_info_args args = {0};
+int get_rmap_count(void *addr) {
+    struct rmap_count_args args = {0};
     args.virtual_address = addr;
     int fd = open(DEVICE, O_RDONLY);
     if (fd < 0) {
         perror("open");
-        return 1;
+        return -1;
     }
-    if (ioctl(fd, IOCTL_IS_FOLIO_SEQ, &args) < 0) {
-        perror("Failed to check if folio is sequential");
+    if (ioctl(fd, IOCTL_GET_RMAP_COUNT, &args) < 0) {
+        perror("Failed to get rmap count");
+        close(fd);
         return -1;
     }
     close(fd);
-    return args.is_seq;
-}
-unsigned int is_folio_anon(void *addr) {
-    struct folio_info_args args = {0};
-    args.virtual_address = addr;
-    int fd = open(DEVICE, O_RDONLY);
-    if (fd < 0) {
-        perror("open");
-        return 1;
-    }
-    if (ioctl(fd, ICOTL_FOLIO_LRU_INFO, &args) < 0) {
-        perror("Failed to check if folio is anon");
-        return -1;
-    }
-    close(fd);
-    return args.is_anon;
-}
-unsigned int is_folio_file(void *addr) {
-    struct folio_info_args args = {0};
-    args.virtual_address = addr;
-    int fd = open(DEVICE, O_RDONLY);
-    if (fd < 0) {
-        perror("open");
-        return 1;
-    }
-    if (ioctl(fd, ICOTL_FOLIO_LRU_INFO, &args) < 0) {
-        perror("Failed to check if folio is file");
-        return -1;
-    }
-    close(fd);
-    return args.is_file;
-}
-unsigned int folio_has_mapping(void *addr) {
-    struct folio_info_args args = {0};
-    args.virtual_address = addr;
-    int fd = open(DEVICE, O_RDONLY);
-    if (fd < 0) {
-        perror("open");
-        return 1;
-    }
-    if (ioctl(fd, ICOTL_FOLIO_LRU_INFO, &args) < 0) {
-        perror("Failed to check if folio has mapping");
-        return -1;
-    }
-    close(fd);
-    return args.has_mapping;
-}
-unsigned short get_current_memcg_id(void) {
-    int memcg_id = -1;
-    int fd = open(DEVICE, O_RDONLY);
-    if (fd < 0) {
-        perror("open");
-        return 1;
-    }
-    if (ioctl(fd, ICOTL_GET_CURRENT_CGROUP, &memcg_id) < 0) {
-        perror("Failed to get current memory cgroup ID");
-        return -1;
-    }
-    close(fd);
-    return (unsigned short)memcg_id;
-}
-unsigned short get_folio_memcg_id(void *addr) {
-    struct folio_info_args args = {0};
-    args.virtual_address = addr;
-    int fd = open(DEVICE, O_RDONLY);
-    if (fd < 0) {
-        perror("open");
-        return 1;
-    }
-    if (ioctl(fd, ICOTL_FOLIO_LRU_INFO, &args) < 0) {
-        perror("Failed to check if folio has mapping");
-        return -1;
-    }
-    close(fd);
-    return args.memory_cgroup;
+    return args.rmap_count; // Return the rmap count directly
 }
 
-int get_swap_offset_from_page(void *addr) {
-    struct swap_info_args args = {0};
-    args.virtual_address = addr;
-    // printf("%p\n",args.virtual_address);
-    if (ioctl(open(DEVICE, O_RDONLY), IOCTL_GET_SWAP_OFFSET_FROM_PAGE, &args) < 0) {
-        perror("Failed to get swap offset from page");
-        return -1;
-    }
-    return args.offset;
-}
+
 void mkswap(const char *filename){
     char command[256];
     snprintf(command, sizeof(command), "mkswap %s > /dev/null 2>&1", filename);
@@ -447,7 +321,7 @@ void* map_anon_region(size_t size) {
         return NULL;
     }
     for (int i = 0; i < sz_in_pages; i++) {
-        addr[i*PAGE_SIZE] = i; //should we not do on i = 0? the KSM problem
+        addr[i*PAGE_SIZE] = (i+1)*42; //should we not do on i = 0? the KSM problem
     }
     return addr;
 }

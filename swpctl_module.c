@@ -31,6 +31,17 @@ struct swap_info_args {
     unsigned long offset;      // Output: Swap offset
     int has_swap_info;         // Output: Swap info presence
 };
+#define IOCTL_GET_RMAP_COUNT _IOWR('s', 0x0B, struct rmap_count_args)
+struct rmap_count_args {
+    void *virtual_address;
+    int rmap_count;
+};
+static bool count_rmap_one(struct folio *folio, struct vm_area_struct *vma, unsigned long address, void *arg) {
+    int *count = (int *)arg;
+    (*count)++;
+    return true; // return true to continue walking to the next VMA
+}
+
 
 
 struct anon_vma_cow_folio_args {
@@ -68,222 +79,6 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 {
     
     switch (cmd) {
-    // case IOCTL_VMA_INFO: {
-    //     struct vma_info_args args;
-
-    //     if (copy_from_user(&args, (void __user *)arg, sizeof(args)))
-    //         return -EFAULT;
-
-    //     // lock current->mm for reading
-    //     // current => macro that returns task_struct
-    //     mmap_read_lock(current->mm);
-    //     struct vm_area_struct *vma = find_vma(current->mm, (unsigned long)args.virtual_address);
-    //     if (!vma)
-    //         return -EINVAL;
-
-    //     args.vma_start = vma->vm_start;
-    //     args.vma_end = vma->vm_end;
-    //     args.vma_ptr = vma;
-    //     args.vm_flags = vma->vm_flags;
-    //     unsigned long flags;
-    //     struct sequential_swap_context *sqwap = vma_get_sqwap(vma);
-    //     if (sqwap) {
-    //         spin_lock_irqsave(&sqwap->lock, flags);
-    //         args.swap_info = sqwap->si;
-    //         args.last_fault_offset = sqwap->last_fault_offset[0]; // Adapt based on index logic
-    //         args.window_start = sqwap->window_start;
-    //         args.window_end = sqwap->window_end;
-    //         args.swap_ahead_size = sqwap->swap_ahead_size;
-    //         spin_unlock_irqrestore(&sqwap->lock, flags);
-    //     }
-    //     mmap_read_unlock(current->mm);
-
-
-    //     if (copy_to_user((void __user *)arg, &args, sizeof(args)))
-    //         return -EFAULT;
-
-    //     return 0;
-    // }
-    // /*
-    // case IOCTL_GET_SWAPFILE_COUNT: {
-    //     int count = get_avail_swap_info_count();
-    //     if (copy_to_user((int __user *)arg, &count, sizeof(count)))
-    //         return -EFAULT;
-    //     return 0;
-    //     }
-    // */
-    // case IOCTL_GET_SWAP_OFFSET_FROM_PAGE: {
-    //     struct swap_info_args args;
-
-    //     if (copy_from_user(&args, (void __user *)arg, sizeof(args)))
-    //         return -EFAULT;
-    //     printk(KERN_INFO "swapctl: Getting swap offset for address 0x%lx\n", (unsigned long)args.virtual_address);
-    //      // Pin the user page
-
-    //     struct page *page = NULL;
-    //     int ret = get_user_pages_fast((unsigned long)args.virtual_address, 1, 0, &page);
-    //     if (ret != 1) {
-    //         pr_err("swapctl: Failed to get page for user address %px (ret=%d)\n", 
-    //             args.virtual_address, ret);
-    //         return -EFAULT;
-    //     }
-    //     struct folio* folio = page_folio(page);
-    //     if(!folio) {
-    //         pr_err("swapctl: Invalid folio for address %px\n", args.virtual_address);
-    //         return -EINVAL;
-    //     }
-    //     printk(KERN_INFO "swapctl: Folio %px has swap %lu\n", folio, swp_offset(folio->swap));
-    //     args.offset = swp_offset(folio->swap);
-        
-    //     put_page(page); // ADD THIS LINE before return
-
-    //     if (copy_to_user((void __user *)arg, &args, sizeof(args)))
-    //         return -EFAULT;
-
-    //     return 0;
-    // }
-    // case IOCTL_VMA_HAS_SWAP_INFO: {
-    //     struct swap_info_args args;
-
-    //     if (copy_from_user(&args, (void __user *)arg, sizeof(args)))
-    //         return -EFAULT;
-
-    //     struct vm_area_struct *vma = find_vma(current->mm, (unsigned long)args.virtual_address);
-    //     if (!vma)
-    //         return -EINVAL;
-    //     struct sequential_swap_context *sqwap = vma_get_sqwap(vma);
-    //     if (!sqwap)
-    //         return -EINVAL;
-    //     unsigned long flags;
-    //     spin_lock_irqsave(&sqwap->lock, flags);
-    //     args.has_swap_info = sqwap->si != NULL;
-    //     spin_unlock_irqrestore(&sqwap->lock, flags);
-
-    //     if (copy_to_user((void __user *)arg, &args, sizeof(args)))
-    //         return -EFAULT;
-
-    //     return 0;
-    // }
-    // case IOCTL_IS_FOLIO_SEQ: {
-    //     struct folio_info_args args;
-    //     if (copy_from_user(&args, (void __user *)arg, sizeof(args)))
-    //         return -EFAULT;
-    //     printk(KERN_INFO "swapctl: Getting folio info for address 0x%lx\n", (unsigned long)args.virtual_address);
-    //      // Pin the user page
-
-    //     struct page *page = NULL;
-    //     int ret = get_user_pages_fast((unsigned long)args.virtual_address, 1, 0, &page);
-    //     if (ret != 1) {
-    //         pr_err("swapctl: Failed to get page for user address %px (ret=%d)\n", 
-    //             args.virtual_address, ret);
-    //         return -EFAULT;
-    //     }
-    //     struct folio* folio = page_folio(page);
-    //     if(!folio) {
-    //         pr_err("swapctl: Invalid folio for address %px\n", args.virtual_address);
-    //         return -EINVAL;
-    //     }
-    //     args.is_seq = folio_test_seq(folio);
-    //     put_page(page); // ADD THIS LINE before return
-    //     printk(KERN_INFO "swapctl: Folio %px is_seq %u\n", folio, args.is_seq);
-    //     if (copy_to_user((void __user *)arg, &args, sizeof(args)))
-    //         return -EFAULT;
-
-    //     return 0;
-    // }
-    // case ICOTL_FOLIO_LRU_INFO: {
-    //     struct folio_info_args args;
-    //     if (copy_from_user(&args, (void __user *)arg, sizeof(args)))
-    //         return -EFAULT;
-    //     printk(KERN_INFO "swapctl: Getting folio info for address 0x%lx\n", (unsigned long)args.virtual_address);
-    //      // Pin the user page
-
-    //     struct page *page = NULL;
-    //     int ret = get_user_pages_fast((unsigned long)args.virtual_address, 1, 0, &page);
-    //     if (ret != 1) {
-    //         pr_err("swapctl: Failed to get page for user address %px (ret=%d)\n", 
-    //             args.virtual_address, ret);
-    //         return -EFAULT;
-    //     }
-    //     struct folio* folio = page_folio(page);
-    //     if(!folio) {
-    //         pr_err("swapctl: Invalid folio for address %px\n", args.virtual_address);
-    //         return -EINVAL;
-    //     }
-    //     args.is_anon = folio_test_anon(folio);
-    //     args.is_file = folio_is_file_lru(folio);
-    //     args.has_mapping = folio->mapping != NULL;
-    //     struct mem_cgroup *memcg = folio_memcg(folio);
-    //     if (memcg) {
-    //         args.memory_cgroup = mem_cgroup_id(memcg);
-    //     }
-    //     put_page(page); // ADD THIS LINE before return
-    //     printk(KERN_INFO "swapctl: Folio %px is_anon %u is_file %u has_mapping %u\n", folio, args.is_anon, args.is_file, args.has_mapping);
-    //     if (copy_to_user((void __user *)arg, &args, sizeof(args)))
-    //         return -EFAULT;
-
-    //     return 0;
-    // }
-    // case ICOTL_GET_CURRENT_CGROUP: {
-    //     unsigned short memcg_id = -1;
-    //     struct mem_cgroup *memcg = mem_cgroup_from_task(current);
-    //     if (memcg) {
-    //         memcg_id = mem_cgroup_id(memcg);
-    //     }
-    //     if (copy_to_user((unsigned short __user *)arg, &memcg_id, sizeof(memcg_id)))
-    //         return -EFAULT;
-    //     return 0;
-    // }
-    // case IOCTL_GET_SWAPFILE_PATH: {
-    //     struct swap_path_args args;
-    //     struct vm_area_struct *vma;
-    //     struct swap_info_struct *si;
-    //     unsigned long flags;
-    //     char *tmp_path;
-    //     char *path_str;
-
-    //     if (copy_from_user(&args, (void __user *)arg, sizeof(args)))
-    //         return -EFAULT;
-
-    //     mmap_read_lock(current->mm);
-    //     vma = find_vma(current->mm, (unsigned long)args.virtual_address);
-    //     if (!vma) {
-    //         mmap_read_unlock(current->mm);
-    //         return -EINVAL;
-    //     }
-    //     struct sequential_swap_context *sqwap = vma_get_sqwap(vma);
-    //     if (!sqwap) {
-    //         mmap_read_unlock(current->mm);
-    //         return -EINVAL;
-    //     }
-
-    //     spin_lock_irqsave(&sqwap->lock, flags);
-    //     si = (struct swap_info_struct *)sqwap->si;
-    //     spin_unlock_irqrestore(&sqwap->lock, flags);
-    //     mmap_read_unlock(current->mm);
-
-    //     if (!si || !si->swap_file)
-    //         return -EINVAL;
-
-    //     tmp_path = kmalloc(256, GFP_KERNEL);
-    //     if (!tmp_path)
-    //         return -ENOMEM;
-
-    //     path_str = d_path(&si->swap_file->f_path, tmp_path, 256);
-    //     if (IS_ERR(path_str)) {
-    //         kfree(tmp_path);
-    //         return PTR_ERR(path_str);
-    //     }
-
-    //     strncpy(args.path, path_str, sizeof(args.path) - 1);
-    //     args.path[sizeof(args.path) - 1] = '\0';
-    //     kfree(tmp_path);
-
-    //     if (copy_to_user((void __user *)arg, &args, sizeof(args)))
-    //         return -EFAULT;
-
-    //     return 0;
-    // }
     case IOCTL_GET_ANON_VMA_FOLIO: {
         struct anon_vma_cow_folio_args args;
         struct page *page = NULL;
@@ -329,8 +124,49 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 
         if (copy_to_user((void __user *)arg, &args, sizeof(args)))
             return -EFAULT;
+    
+
+    return 0;
     }
+    case IOCTL_GET_RMAP_COUNT: {
+    struct rmap_count_args args;
+    struct page *page = NULL;
+    struct folio *folio = NULL;
+
+    if (copy_from_user(&args, (void __user *)arg, sizeof(args)))
+        return -EFAULT;
+
+    mmap_read_lock(current->mm);
+    
+    // Pin the page and get the underlying folio
+    if (get_user_pages_fast((unsigned long)args.virtual_address, 1, 0, &page) == 1) {
+        folio = page_folio(page);
+        args.rmap_count = 0; 
+        
+        struct rmap_walk_control rwc = {
+            .rmap_one = count_rmap_one,
+            .arg = &args.rmap_count,
+            .anon_lock = folio_lock_anon_vma_read,
+        };
+        
+        // This walks all VMAs mapped to this folio and runs 'count_rmap_one'
+        rmap_walk(folio, &rwc);
+        
+        put_page(page);
+    } else {
+        args.rmap_count = -1; // If the page is not resident/invalid
+    }
+    
+    mmap_read_unlock(current->mm);
+
+    if (copy_to_user((void __user *)arg, &args, sizeof(args)))
+        return -EFAULT;
+
+    return 0;
 }
+    default:
+        return -ENOTTY;
+    }
     return 0;
 }
 static const struct file_operations swapctl_fops = {

@@ -10,40 +10,11 @@
 
 
 #define PAGE_SIZE 4096
-// REGISTER_TEST(test_folio_file_info);
-// REGISTER_TEST(test_folio_offset);
-// REGISTER_TEST(test_multiple_swapfiles);
-// REGISTER_TEST(test_multiple_swapfiles2);
-//REGISTER_TEST(test_vma_si_allcation);
-//REGISTER_TEST(test_vma_si_allcation_large);
-// REGISTER_TEST(test_stack_vma_offset);
-// REGISTER_TEST(test_stack_vma_enlarge);
-// REGISTER_TEST(test_available_swapfile);
-// REGISTER_TEST(test_vma_values);
-//REGISTER_TEST(test_mul_vma_values);
-// REGISTER_TEST(test_heap_enlarge);
-// REGISTER_PERF_TEST(test_seq_swapout_throughput);
-// REGISTER_PERF_TEST(test_rand_swapout_throughput);
-// REGISTER_PERF_TEST(test_seq_swapin_throughput);
-// REGISTER_PERF_TEST(test_rand_swapin_throughput);
-// REGISTER_TEST(test_seq_alloc);
-// REGISTER_TEST(test_large_seq_alloc);
-// REGISTER_TEST(test_random_alloc);
-//REGISTER_TEST(test_swapfile_path);
-//REGISTER_TEST(test_basic_no_cow);
-REGISTER_TEST(test_folio_anon_vma_allocation);
 
-// Memory-limited tests that trigger swapping
-// REGISTER_MEMORY_TEST(test_vma_reclaim_window, "4M");
-// REGISTER_MEMORY_TEST(test_vma_reclaim_loop, "2M");
-// REGISTER_MEMORY_TEST(test_file, "2M");
-// REGISTER_MEMORY_TEST(test_vma_reclaim_window_file, "4M");
-/**TODO: 
-    -add shared vma tests
-    -add heap recude tests
-    -add stack reduce tests
-    -add vma merge tests. if merge to the right do not NULL the swap_info
-**/
+//REGISTER_TEST(test_folio_anon_vma_allocation);
+REGISTER_TEST(test_cow_rmap_walk);
+
+
 
 void test_folio_anon_vma_allocation(void) {
     char *addr = map_anon_region(PAGE_SIZE);
@@ -53,13 +24,46 @@ void test_folio_anon_vma_allocation(void) {
     unsigned long returned_page_anon_vma = get_anon_vma_folio(addr);
     unsigned long returned_vma_anon_vma = get_anon_vma_vma(addr);
     
-    // Check if the functions actually retrieved values successfully
     ASSERT_NEQ(returned_page_anon_vma, 0); 
     ASSERT_NEQ(returned_vma_anon_vma, 0);
 
-    // Run your comparison!
     ASSERT_EQ(returned_page_anon_vma, returned_vma_anon_vma);
 }
+
+void test_cow_rmap_walk(void){
+    char *addr= map_anon_region(4*PAGE_SIZE);
+    ASSERT_NEQ(addr, NULL);
+    addr[0]=42;
+    addr[PAGE_SIZE]=52;
+    addr[2*PAGE_SIZE]=68;
+    ASSERT_EQ(get_rmap_count(addr), 1);
+    ASSERT_EQ(get_rmap_count(addr + PAGE_SIZE), 1);
+    ASSERT_EQ(get_rmap_count(addr + 2 * PAGE_SIZE), 1);
+    pid_t pid = fork();
+    //child
+    if (pid == 0) {
+        addr[PAGE_SIZE]=99;
+        addr[3*PAGE_SIZE]=57;
+        ASSERT_EQ(get_rmap_count(addr), 2);
+        ASSERT_EQ(get_rmap_count(addr + PAGE_SIZE), 1);
+        ASSERT_EQ(get_rmap_count(addr + 3*PAGE_SIZE), 1);  
+        //exit(0);
+        while(1){sleep(1);} //wait for parent to send kill to child - so child will still map f1 in parent code and we assert 2 there
+    }
+    //parent
+    else{
+        //wait(NULL);
+        usleep(50000); //50ms to let child do its writes and map the pages
+        addr[2*PAGE_SIZE]=120;
+        addr[3*PAGE_SIZE]=21;
+        ASSERT_EQ(get_rmap_count(addr), 2);
+        ASSERT_EQ(get_rmap_count(addr + 2*PAGE_SIZE), 1); 
+        ASSERT_EQ(get_rmap_count(addr + 3*PAGE_SIZE), 1);
+        kill(pid, SIGKILL); // Ensure child is killed
+        wait(NULL);
+    }
+}
+
 
 void print_usage(char* argv0) {
     printf("Usage: %s [OPTIONS]\n", argv0);
