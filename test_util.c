@@ -181,6 +181,27 @@ int get_rmap_count(void *addr) {
 }
 
 
+int get_swap_bin(void *addr) {
+    struct swap_bin_args args = {0};
+    args.virtual_address = addr;
+    args.bin_index = -1; // init to indicate not found by default
+    
+    int fd = open(DEVICE, O_RDONLY);
+    if (fd < 0) {
+        perror("Failed to open device");
+        return -1;
+    }
+    
+    if (ioctl(fd, IOCTL_GET_SWAP_BIN, &args) < 0) {
+        perror("Failed to get swap bin");
+        close(fd);
+        return -1;
+    }
+    close(fd);
+    return args.bin_index;
+}
+
+
 void mkswap(const char *filename){
     char command[256];
     snprintf(command, sizeof(command), "mkswap %s > /dev/null 2>&1", filename);

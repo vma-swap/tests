@@ -9,6 +9,7 @@
 #include <linux/swapops.h>
 #include <linux/mm_inline.h>
 #include <linux/rmap.h>
+#include <linux/log2.h>
 
 #define DEVICE_NAME "swapctl"
 #define IOCTL_GET_SWAPFILE_COUNT _IOR('s', 0x01, int)
@@ -21,6 +22,8 @@
 #define IOCTL_GET_SWAPFILE_PATH _IOWR('s', 0x08, struct swap_path_args)
 #define IOCTL_GET_ANON_VMA_FOLIO _IOR('s', 0x09, struct anon_vma_cow_folio_args)
 #define IOCTL_GET_ANON_VMA_VMA _IOR('s', 0x0A, struct anon_vma_cow_vma_args)
+#define IOCTL_GET_RMAP_COUNT _IOWR('s', 0x0B, struct rmap_count_args)
+#define IOCTL_GET_SWAP_BIN _IOWR('s', 0x0C, struct swap_bin_args)
 
 struct swap_path_args {
     void *virtual_address;
@@ -31,10 +34,14 @@ struct swap_info_args {
     unsigned long offset;      // Output: Swap offset
     int has_swap_info;         // Output: Swap info presence
 };
-#define IOCTL_GET_RMAP_COUNT _IOWR('s', 0x0B, struct rmap_count_args)
+
 struct rmap_count_args {
     void *virtual_address;
     int rmap_count;
+};
+struct swap_bin_args {
+    void *virtual_address;
+    int bin_index;
 };
 static bool count_rmap_one(struct folio *folio, struct vm_area_struct *vma, unsigned long address, void *arg) {
     int *count = (int *)arg;
@@ -164,6 +171,33 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 
     return 0;
 }
+
+    case IOCTL_GET_SWAP_BIN: {
+        struct swap_bin_args args;
+        struct page *page = NULL;
+        struct folio *folio = NULL;
+
+        if (copy_from_user(&args, (void __user *)arg, sizeof(args)))
+            return -EFAULT;
+
+        mmap_read_lock(current->mm);
+        // Pin the page and get the underlying folio
+        if (get_user_pages_fast((unsigned long)args.virtual_address, 1, 0, &page) == 1) {
+            args.bin_index = swap_bin_index_for_pages(page);
+            put_page(page);
+        } else {
+            args.bin_index = -1; // If the page is not resident/invalid
+        }
+        mmap_read_unlock(current->mm);
+
+        if (copy_to_user((void __user *)arg, &args, sizeof(args)))
+            return -EFAULT;
+
+        return 0;
+    }
+
+
+
     default:
         return -ENOTTY;
     }

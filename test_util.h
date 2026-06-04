@@ -21,6 +21,11 @@ struct vma_info_args {
 	size_t swap_ahead_size; 
 };
 
+struct swap_bin_args {
+    void *virtual_address;
+    int bin_index;
+};
+
 #define DEVICE "/dev/swapctl"
 #define IOCTL_GET_SWAPFILE_COUNT _IOR('s', 0x01, int)
 #define IOCTL_GET_SWAP_OFFSET_FROM_PAGE _IOR('s', 0x02, unsigned long)
@@ -33,6 +38,7 @@ struct vma_info_args {
 #define IOCTL_GET_ANON_VMA_FOLIO _IOR('s', 0x09, struct anon_vma_cow_folio_args)
 #define IOCTL_GET_ANON_VMA_VMA _IOR('s', 0x0A, struct anon_vma_cow_vma_args)
 #define IOCTL_GET_RMAP_COUNT _IOWR('s', 0x0B, struct rmap_count_args)
+#define IOCTL_GET_SWAP_BIN _IOWR('s', 0x0C, struct swap_bin_args)
 
 #define DIV_ROUND_UP(n, d) (((n) + (d) - 1) / (d))
 
@@ -49,6 +55,7 @@ int swapout_page(void *addr);
 int swapout_pages(void *addr, unsigned long long pages);
 unsigned long get_anon_vma_folio(void *addr);
 unsigned long get_anon_vma_vma(void *addr);
+int get_swap_bin(void *addr);
 int get_rmap_count(void *addr);
 int get_swapfile_count();
 int get_swap_offset_from_page(void *addr);

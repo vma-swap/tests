@@ -12,7 +12,8 @@
 #define PAGE_SIZE 4096
 
 //REGISTER_TEST(test_folio_anon_vma_allocation);
-REGISTER_TEST(test_cow_rmap_walk);
+//REGISTER_TEST(test_cow_rmap_walk);
+REGITSTER_TEST(test_swap_bin_allocation);
 
 
 
@@ -63,6 +64,38 @@ void test_cow_rmap_walk(void){
         wait(NULL);
     }
 }
+
+void test_swap_bin_allocation(void) {
+    // -------- BIN 0 (1 Page) --------
+    char *addr1 = map_anon_region(PAGE_SIZE);
+    ASSERT_NEQ(addr1, NULL);
+    addr1[0] = 42; // Fault the page to safely map it
+    ASSERT_EQ(swapout_pages(addr1, 1), 0); // Evict to swap
+    int bin1 = get_swap_bin(addr1);
+    ASSERT_EQ(bin1, 0); // Verified Bin 0
+
+    // -------- BIN 1 (2 Pages) --------
+    char *addr2 = map_anon_region(2 * PAGE_SIZE);
+    ASSERT_NEQ(addr2, NULL);
+    addr2[0] = 42; 
+    addr2[PAGE_SIZE] = 42; 
+    ASSERT_EQ(swapout_pages(addr2, 2), 0); 
+    int bin2 = get_swap_bin(addr2);
+    ASSERT_EQ(bin2, 1); // Verified Bin 1
+
+    // -------- BIN 2 (4 Pages) --------
+    char *addr3 = map_anon_region(4 * PAGE_SIZE);
+    ASSERT_NEQ(addr3, NULL);
+    addr3[0] = 42;
+    addr3[PAGE_SIZE] = 42;
+    addr3[2 * PAGE_SIZE] = 42;
+    addr3[3 * PAGE_SIZE] = 42;
+    ASSERT_EQ(swapout_pages(addr3, 4), 0); 
+    int bin3 = get_swap_bin(addr3);
+    ASSERT_EQ(bin3, 2); // Verified Bin 2
+}
+
+
 
 
 void print_usage(char* argv0) {
