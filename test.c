@@ -13,8 +13,7 @@
 
 //REGISTER_TEST(test_folio_anon_vma_allocation);
 //REGISTER_TEST(test_cow_rmap_walk);
-REGITSTER_TEST(test_swap_bin_allocation);
-
+REGISTER_TEST(test_swap_bin_allocation);
 
 
 void test_folio_anon_vma_allocation(void) {
@@ -66,33 +65,39 @@ void test_cow_rmap_walk(void){
 }
 
 void test_swap_bin_allocation(void) {
-    // -------- BIN 0 (1 Page) --------
-    char *addr1 = map_anon_region(PAGE_SIZE);
-    ASSERT_NEQ(addr1, NULL);
-    addr1[0] = 42; // Fault the page to safely map it
-    ASSERT_EQ(swapout_pages(addr1, 1), 0); // Evict to swap
-    int bin1 = get_swap_bin(addr1);
-    ASSERT_EQ(bin1, 0); // Verified Bin 0
+    // 1. Snapshot the initial inventory of Bin 2 (4 Pages)
+    int initial_bin2_count = get_bin_inventory(2);
+    ASSERT_NEQ(initial_bin2_count, -1);
 
-    // -------- BIN 1 (2 Pages) --------
-    char *addr2 = map_anon_region(2 * PAGE_SIZE);
-    ASSERT_NEQ(addr2, NULL);
-    addr2[0] = 42; 
-    addr2[PAGE_SIZE] = 42; 
-    ASSERT_EQ(swapout_pages(addr2, 2), 0); 
-    int bin2 = get_swap_bin(addr2);
-    ASSERT_EQ(bin2, 1); // Verified Bin 1
+    // 2. Map 4 pages
+    char *addr = map_anon_region(4 * PAGE_SIZE);
+    ASSERT_NEQ(addr, NULL);
+    
+    // Fault pages so anon_vma is established
+    addr[0] = 42;
+    addr[PAGE_SIZE] = 42;
+    addr[2 * PAGE_SIZE] = 42;
+    addr[3 * PAGE_SIZE] = 42;
 
-    // -------- BIN 2 (4 Pages) --------
-    char *addr3 = map_anon_region(4 * PAGE_SIZE);
-    ASSERT_NEQ(addr3, NULL);
-    addr3[0] = 42;
-    addr3[PAGE_SIZE] = 42;
-    addr3[2 * PAGE_SIZE] = 42;
-    addr3[3 * PAGE_SIZE] = 42;
-    ASSERT_EQ(swapout_pages(addr3, 4), 0); 
-    int bin3 = get_swap_bin(addr3);
-    ASSERT_EQ(bin3, 2); // Verified Bin 2
+    // 3. Force Swapout
+    ASSERT_EQ(swapout_pages(addr, 4), 0); 
+
+    // 4. Verify the VMA was assigned an si from the correct bin
+    int assigned_bin = get_swap_bin(addr);
+    ASSERT_EQ(assigned_bin, 2); // Log2(4 pages) = Bin 2
+
+    // 5. Verify the Bin Inventory dropped by 1 
+    // (Because acquire_si_from_bin took it out!)
+    int active_bin2_count = get_bin_inventory(2);
+    ASSERT_EQ(active_bin2_count, initial_bin2_count - 1);
+
+    // 6. Free the memory (Trigger recycle_si_to_bin)
+    munmap(addr, 4 * PAGE_SIZE);
+    usleep(50000); // Give the kernel a fraction of a second to clean up
+
+    // 7. Verify the SI was returned to the bin
+    int final_bin2_count = get_bin_inventory(2);
+    ASSERT_EQ(final_bin2_count, initial_bin2_count);
 }
 
 

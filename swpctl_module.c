@@ -24,6 +24,7 @@
 #define IOCTL_GET_ANON_VMA_VMA _IOR('s', 0x0A, struct anon_vma_cow_vma_args)
 #define IOCTL_GET_RMAP_COUNT _IOWR('s', 0x0B, struct rmap_count_args)
 #define IOCTL_GET_SWAP_BIN _IOWR('s', 0x0C, struct swap_bin_args)
+#define IOCTL_GET_BIN_COUNT _IOWR('s', 0x0D, int)
 
 struct swap_path_args {
     void *virtual_address;
@@ -81,6 +82,16 @@ struct folio_info_args {
     unsigned int has_mapping;
     unsigned short memory_cgroup;
 };
+
+extern int get_swap_bin_count(int bin_index); // Declare the external function
+
+
+static int swap_bin_index_for_page(unsigned long pages)
+{
+	if (pages <= 1)
+		return 0;
+	return __ilog2_u32(pages);
+}
 
 static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
@@ -174,19 +185,26 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 
     case IOCTL_GET_SWAP_BIN: {
         struct swap_bin_args args;
-        struct page *page = NULL;
-        struct folio *folio = NULL;
+        struct vm_area_struct *vma;
+        struct anon_vma *anon_vma;
+        struct swap_info_struct *si;
 
         if (copy_from_user(&args, (void __user *)arg, sizeof(args)))
             return -EFAULT;
 
         mmap_read_lock(current->mm);
-        // Pin the page and get the underlying folio
-        if (get_user_pages_fast((unsigned long)args.virtual_address, 1, 0, &page) == 1) {
-            args.bin_index = swap_bin_index_for_pages(page);
-            put_page(page);
+
+        vma = find_vma(current->mm, (unsigned long)args.virtual_address);
+        if (vma && vma->anon_vma){
+            anon_vma = vma->anon_vma;
+            si = anon_vma->si;
+            if (si) {
+                args.bin_index = swap_bin_index_for_page(si->pages);
+            } else {
+                args.bin_index = -1; // No swap info available
+            }
         } else {
-            args.bin_index = -1; // If the page is not resident/invalid
+            args.bin_index = -1; // VMA not found or has no anon_vma
         }
         mmap_read_unlock(current->mm);
 
@@ -196,6 +214,17 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
         return 0;
     }
 
+    case IOCTL_GET_BIN_COUNT: {
+        int bin_index;
+        if (copy_from_user(&bin_index, (int __user *)arg, sizeof(int)))
+            return -EFAULT;
+            
+        int count = get_swap_bin_count(bin_index);
+        
+        if (copy_to_user((int __user *)arg, &count, sizeof(int)))
+            return -EFAULT;
+        return 0;
+    }
 
 
     default:

@@ -201,6 +201,22 @@ int get_swap_bin(void *addr) {
     return args.bin_index;
 }
 
+int get_bin_inventory(int bin_index) {
+    int count = bin_index;
+    int fd = open(DEVICE, O_RDONLY);
+    if (fd < 0) {
+        perror("Failed to open device");
+        return -1;
+    }
+    if (ioctl(fd, IOCTL_GET_BIN_COUNT, &count) < 0) {
+        perror("Failed to get bin count");
+        close(fd);
+        return -1;
+    }
+    close(fd);
+    return count;
+}
+
 
 void mkswap(const char *filename){
     char command[256];
