@@ -101,6 +101,7 @@ static inline int run_all_tests(int enable_traces) {
     test_case_t *t = test_list_head;
     pid_t pid = 0;
     set_minimal_swapfile_num(disable_swaps()); // Disable all swaps before running tests
+    //remove set_minimal and in disable swaps we need to run to disable all swap files we created
     
     while (t) {
         fprintf(stderr, COLOR_YELLOW "RUNNING" COLOR_RESET " %s\n", t->name);

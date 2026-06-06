@@ -75,5 +75,7 @@ void start_measurement(void);
 double stop_measurement(void);
 int create_tempfile(size_t size);
 void drop_caches();
+int is_file_contiguous(const char *filename);
+void make_swapsfiles(int num_swapfiles, int size, int swap_flags);
 
 #endif // TEST_UTIL_H

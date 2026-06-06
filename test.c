@@ -1,3 +1,4 @@
+
 #include "test_framework.h"
 #include "test_util.h" // for make_swaps()
 #include <sys/mman.h>
@@ -7,6 +8,8 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/wait.h>
+
+
 
 
 #define PAGE_SIZE 4096
@@ -65,39 +68,52 @@ void test_cow_rmap_walk(void){
 }
 
 void test_swap_bin_allocation(void) {
-    // 1. Snapshot the initial inventory of Bin 2 (4 Pages)
-    int initial_bin2_count = get_bin_inventory(2);
-    ASSERT_NEQ(initial_bin2_count, -1);
 
-    // 2. Map 4 pages
+    //bin N -> 2^N x 4k
+
+    // 1. Create the swap files FIRST
+    const size_t swapfile_size = 1UL * 1024 * 1024; // 1MB (Lands in Bin 7)
+    make_swapfiles(1, swapfile_size, 0);
+
+    /*for(int i=0;i<35;i++)
+    {
+        printf("bin %d count = %d\n", i, get_bin_inventory(i));
+    }*/
+
+    // 2. Take the snapshot AFTER the bin is populated
+    int initial_bin7_count = get_bin_inventory(7);
+    ASSERT_NEQ(initial_bin7_count, -1);
+    printf("Initial Bin 7 inventory: %d\n", initial_bin7_count); // Should print 1
+
+    // 3. Map 4 pages
     char *addr = map_anon_region(4 * PAGE_SIZE);
     ASSERT_NEQ(addr, NULL);
     
     // Fault pages so anon_vma is established
     addr[0] = 42;
-    addr[PAGE_SIZE] = 42;
-    addr[2 * PAGE_SIZE] = 42;
-    addr[3 * PAGE_SIZE] = 42;
+    addr[PAGE_SIZE] = 62;
+    addr[2 * PAGE_SIZE] = 82;
+    addr[3 * PAGE_SIZE] = 102;
 
     // 3. Force Swapout
     ASSERT_EQ(swapout_pages(addr, 4), 0); 
 
     // 4. Verify the VMA was assigned an si from the correct bin
     int assigned_bin = get_swap_bin(addr);
-    ASSERT_EQ(assigned_bin, 2); // Log2(4 pages) = Bin 2
+    ASSERT_EQ(assigned_bin, 7); // Log2(1 MB) = Bin 7
 
     // 5. Verify the Bin Inventory dropped by 1 
     // (Because acquire_si_from_bin took it out!)
-    int active_bin2_count = get_bin_inventory(2);
-    ASSERT_EQ(active_bin2_count, initial_bin2_count - 1);
+    int active_bin7_count = get_bin_inventory(7);
+    ASSERT_EQ(active_bin7_count, initial_bin7_count - 1);
 
     // 6. Free the memory (Trigger recycle_si_to_bin)
     munmap(addr, 4 * PAGE_SIZE);
     usleep(50000); // Give the kernel a fraction of a second to clean up
 
     // 7. Verify the SI was returned to the bin
-    int final_bin2_count = get_bin_inventory(2);
-    ASSERT_EQ(final_bin2_count, initial_bin2_count);
+    int final_bin7_count = get_bin_inventory(7);
+    ASSERT_EQ(final_bin7_count, initial_bin7_count);
 }
 
 

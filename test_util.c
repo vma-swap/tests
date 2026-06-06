@@ -1,4 +1,5 @@
 // test_util.c
+#define _GNU_SOURCE
 #include "test_util.h"
 #include <string.h>
 #include <sys/syscall.h>
@@ -561,4 +562,70 @@ int create_tempfile(size_t size) {
 }
 void drop_caches() {
     system("echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null");
+}
+
+int is_file_contiguous(const char *filename) {
+    char cmd[512];
+    char output[1024];
+
+    snprintf(cmd, sizeof(cmd), "filefrag %s", filename);
+
+    FILE *fp = popen(cmd, "r");
+    if (!fp) {
+        perror("popen filefrag");
+        return 0;
+    }
+
+    int contiguous = 0;
+
+    while (fgets(output, sizeof(output), fp)) {
+        if (strstr(output, "1 extent found")) {
+            contiguous = 1;
+            break;
+        }
+    }
+
+    pclose(fp);
+    return contiguous;
+}
+
+//a complete function that creates swapfiles and formats them using mkswap
+void make_swapfiles(int num_swapfiles, int size, int swap_flags) {
+    for (int i = 0; i < num_swapfiles; i++) {
+        char filename[256];
+
+        snprintf(filename, sizeof(filename),
+                 "/scratch/vma_swaps/swapfile_%d.swap",
+                 i + free_swapfile_index);
+
+        while (1) {
+            unlink(filename);
+
+            int fd = open(filename, O_CREAT | O_TRUNC | O_RDWR, 0600);
+            if (fd < 0) {
+                perror("open swapfile");
+                exit(EXIT_FAILURE);
+            }
+
+            if (fallocate(fd, 0, 0, size) < 0) {
+                perror("fallocate swapfile");
+                close(fd);
+                exit(EXIT_FAILURE);
+            }
+
+            close(fd);
+
+            if (is_file_contiguous(filename)) {
+                break;
+            }
+
+            fprintf(stderr, "%s is fragmented, retrying...\n", filename);
+            unlink(filename);
+        }
+
+        mkswap(filename);
+        enable_swap(filename, swap_flags);
+    }
+
+    free_swapfile_index += num_swapfiles;
 }
