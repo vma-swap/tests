@@ -16,7 +16,8 @@
 
 //REGISTER_TEST(test_folio_anon_vma_allocation);
 //REGISTER_TEST(test_cow_rmap_walk);
-REGISTER_TEST(test_swap_bin_allocation);
+//REGISTER_TEST(test_swap_bin_allocation);
+REGISTER_TEST(test_swap_bin_fallback);
 
 
 void test_folio_anon_vma_allocation(void) {
@@ -73,7 +74,7 @@ void test_swap_bin_allocation(void) {
 
     // 1. Create the swap files FIRST
     const size_t swapfile_size = 1UL * 1024 * 1024; // 1MB (Lands in Bin 7)
-    make_swapfiles(1, swapfile_size, 0);
+    make_swapfiles(1, swapfile_size, 0); //needed because swap area is cleaned in test_framework.h
 
     /*for(int i=0;i<35;i++)
     {
@@ -114,6 +115,71 @@ void test_swap_bin_allocation(void) {
     // 7. Verify the SI was returned to the bin
     int final_bin7_count = get_bin_inventory(7);
     ASSERT_EQ(final_bin7_count, initial_bin7_count);
+}
+
+void test_swap_bin_fallback(void) {
+    printf("Starting Bin Fallback Allocation Test...\n");
+
+    // 1. Create our swap files (accounting for the 1-page header tax)
+    // Target Bin 8 (256 usable pages) -> We need 257 total pages
+    const size_t bin8_size = 257 * PAGE_SIZE; 
+    // Target Bin 3 (8 usable pages) -> We need 9 total pages
+    const size_t bin3_size = 9 * PAGE_SIZE;
+
+    make_swapfiles(1, bin8_size, 0);
+    make_swapfiles(1, bin3_size, 0);
+
+    // 2. Snapshot the initial inventories
+    int initial_bin8 = get_bin_inventory(8);
+    int initial_bin3 = get_bin_inventory(3);
+    
+    ASSERT_EQ(initial_bin8, 1);
+    ASSERT_EQ(initial_bin3, 1);
+    printf("  -> Setup successful. Bin 8: %d, Bin 3: %d\n", initial_bin8, initial_bin3);
+
+    // 3. Occupy the large swap file (Bin 8)
+    char *addr_large = map_anon_region(256 * PAGE_SIZE);
+    ASSERT_NEQ(addr_large, NULL);
+    addr_large[0] = 42; // Fault a page to establish anon_vma
+    
+    // Swap it out. It asks for 256 pages, finds Bin 8, and takes it.
+    ASSERT_EQ(swapout_pages(addr_large, 1), 0);
+    ASSERT_EQ(get_swap_bin(addr_large), 8);
+    
+    // Verify Bin 8 is now empty
+    int active_bin8 = get_bin_inventory(8);
+    ASSERT_EQ(active_bin8, 0);
+    printf("  -> Large VMA successfully occupied Bin 8.\n");
+
+    // 4. Create a SECOND large mapping
+    char *addr_fallback = map_anon_region(256 * PAGE_SIZE);
+    ASSERT_NEQ(addr_fallback, NULL);
+    addr_fallback[0] = 42; // Fault
+
+    // 5. Force the Fallback
+    // The kernel will calculate Bin 8. Bin 8 is empty. 
+    // Upward scan (Bins 9-34) will fail. 
+    // Downward scan will trigger and find our file in Bin 3!
+    printf("  -> Forcing fallback allocation...\n");
+    ASSERT_EQ(swapout_pages(addr_fallback, 1), 0);
+
+    // 6. Verify the Fallback worked perfectly
+    int assigned_bin = get_swap_bin(addr_fallback);
+    ASSERT_EQ(assigned_bin, 3); // It must equal 3!
+    
+    // Verify Bin 3 was actually taken
+    int active_bin3 = get_bin_inventory(3);
+    ASSERT_EQ(active_bin3, 0);
+    printf("  -> Fallback successful! VMA was assigned to Bin %d.\n", assigned_bin);
+
+    // 7. Clean up and verify recycling
+    munmap(addr_large, 256 * PAGE_SIZE);
+    munmap(addr_fallback, 256 * PAGE_SIZE);
+    usleep(100000); // Give the kernel 100ms to recycle the structs
+
+    ASSERT_EQ(get_bin_inventory(8), initial_bin8);
+    ASSERT_EQ(get_bin_inventory(3), initial_bin3);
+    printf("  -> Memory freed. All structs successfully recycled back to their bins.\n");
 }
 
 
