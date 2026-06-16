@@ -71,6 +71,12 @@ struct swap_file_info {
 #define IOCTL_FOLIO_LRU_INFO _IOR('s', 0x03, struct folio_info_args)
 #define IOCTL_GET_CURRENT_CGROUP _IOR('s', 0x04, unsigned short)
 #define IOCTL_ANON_VMA_INFO_FROM_VMA _IOR('s', 0x08, struct anon_vma_info_args)
+#define IOCTL_GET_PT_PAGE_FROM_ADDRESS _IOWR('s', 0x09, unsigned long)
+#define IOCTL_FOLIO_GET_MAPCOUNT _IOWR('s', 0x10, struct folio_get_mapcount_args)
+struct folio_get_mapcount_args {
+    void *virtual_address;
+    unsigned long mapcount;
+};
 
 struct vma_info_args get_vma_info(void *addr);
 struct anon_vma_info_args get_anon_vma_info(void *addr);
@@ -79,8 +85,12 @@ unsigned int count_rmap_vmas(void *addr);
 struct swap_file_info get_swap_file_info(void *addr);
 struct folio_info_args get_folio_info(void *addr);
 unsigned short get_current_cgroup(void);
+unsigned long get_pte_value(void *addr);
+unsigned long get_folio_mapcount(void *addr);
 int parse_named_swap_index(const char *path, unsigned long *index);
 void named_swap_path_for_index(char *path, size_t size, unsigned long index);
+int signal_fd(int fd);
+int wait_fd(int fd);
 
 pid_t start_ftrace(void);
 void stop_ftrace(char *test_name, pid_t pid);

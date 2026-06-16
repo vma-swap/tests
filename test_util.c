@@ -9,6 +9,28 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+int signal_fd(int fd) {
+    char byte = 1;
+    ssize_t ret;
+
+    do {
+        ret = write(fd, &byte, sizeof(byte));
+    } while (ret < 0 && errno == EINTR);
+
+    return ret == sizeof(byte) ? 0 : -1;
+}
+
+int wait_fd(int fd) {
+    char byte;
+    ssize_t ret;
+
+    do {
+        ret = read(fd, &byte, sizeof(byte));
+    } while (ret < 0 && errno == EINTR);
+
+    return ret == sizeof(byte) ? 0 : -1;
+}
+
 static int open_swapctl(void) {
     int fd = open(DEVICE, O_RDONLY);
     if (fd < 0)
@@ -99,6 +121,30 @@ struct swap_file_info get_swap_file_info(void *addr) {
     return args;
 }
 
+unsigned long get_pte_value(void *addr) {
+    unsigned long value = (unsigned long)addr;
+    int fd = open_swapctl();
+
+    if (fd < 0)
+        return 0;
+
+    if (ioctl(fd, IOCTL_GET_PT_PAGE_FROM_ADDRESS, &value) < 0)
+        perror("Failed to get PTE value");
+    close(fd);
+    return value;
+}
+
+unsigned long get_folio_mapcount(void *addr) {
+    struct folio_get_mapcount_args args = {0};
+    args.virtual_address = addr;
+    int fd = open_swapctl();
+    if (fd < 0)
+        return 0;
+    if (ioctl(fd, IOCTL_FOLIO_GET_MAPCOUNT, &args) < 0)
+        perror("Failed to get folio mapcount");
+    close(fd);
+    return args.mapcount;
+}
 int parse_named_swap_index(const char *path, unsigned long *index) {
     const char *digits;
     char *end;

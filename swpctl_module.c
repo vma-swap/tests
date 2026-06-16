@@ -9,9 +9,12 @@
 #include <linux/slab.h>
 #include <linux/swapops.h>
 #include <linux/mm_inline.h>
+#include <linux/pgtable.h>
+#include <linux/pagemap.h>
 #include <linux/rmap.h>
 #include <linux/limits.h>
 #include <linux/string.h>
+#include <linux/xarray.h>
 
 #define DEVICE_NAME "swapctl"
 #define RMAP_WALK_MAX_VMAS 64
@@ -23,6 +26,13 @@
 #define IOCTL_COUNT_RMAP_VMAS _IOWR('s', 0x06, struct rmap_walk_args)
 #define IOCTL_GET_SWAP_FILE_PATH _IOWR('s', 0x07, struct swap_file_info)
 #define IOCTL_ANON_VMA_INFO_FROM_VMA _IOR('s', 0x08, struct anon_vma_info_args)
+#define IOCTL_GET_PT_PAGE_FROM_ADDRESS _IOWR('s', 0x09, unsigned long)
+#define IOCTL_FOLIO_GET_MAPCOUNT _IOWR('s', 0x10, struct folio_get_mapcount_args)
+
+struct folio_get_mapcount_args {
+    void *virtual_address;
+    unsigned long mapcount;
+};
 
 struct swap_file_info {
     void *virtual_address;
@@ -68,12 +78,154 @@ struct folio_info_args {
     unsigned short memory_cgroup;
 };
 
+enum swapctl_pte_state {
+    SWAPCTL_PTE_NONE = 0,
+    SWAPCTL_PTE_PRESENT,
+    SWAPCTL_PTE_SWAP,
+    SWAPCTL_PTE_NAMED_SWAP,
+    SWAPCTL_PTE_NON_SWAP,
+};
+
+struct swapctl_pte_info {
+    unsigned long pte_value;
+    enum swapctl_pte_state state;
+    unsigned long pfn;
+    unsigned int swp_type;
+    unsigned long swp_offset;
+    unsigned long named_swap_index;
+};
+
 static bool swapctl_rmap_one(struct folio *folio, struct vm_area_struct *vma,
                              unsigned long addr, void *arg)
 {
     unsigned int *nr_vmas = arg;
     (*nr_vmas)++;
     return true;
+}
+
+#define SWAPCTL_WORKINGSET_SHIFT 1
+#define SWAPCTL_EVICTION_SHIFT ((BITS_PER_LONG - BITS_PER_XA_VALUE) + \
+                                SWAPCTL_WORKINGSET_SHIFT + NODES_SHIFT + \
+                                MEM_CGROUP_ID_SHIFT)
+#define SWAPCTL_NAMED_SWAP_MC_SHIFT (BITS_PER_LONG - SWAPCTL_EVICTION_SHIFT)
+#define SWAPCTL_NAMED_SWAP_MC_MASK ((1UL << SWAPCTL_NAMED_SWAP_MC_SHIFT) - 1)
+
+static int swapctl_named_swap_shadow_mapcount(void *shadow)
+{
+    unsigned long value = xa_to_value(shadow);
+
+    if (!(value >> SWAPCTL_NAMED_SWAP_MC_SHIFT))
+        return 0;
+
+    return value & SWAPCTL_NAMED_SWAP_MC_MASK;
+}
+
+static int swapctl_named_swap_mapcount(struct address_space *mapping,
+                                       pgoff_t index)
+{
+    void *entry;
+    int mapcount = 0;
+
+    if (!mapping || !mapping_named_swap(mapping))
+        return 0;
+
+    xa_lock_irq(&mapping->i_pages);
+    entry = xa_load(&mapping->i_pages, index);
+    if (!entry)
+        goto out;
+
+    if (xa_is_value(entry))
+        mapcount = swapctl_named_swap_shadow_mapcount(entry);
+    else
+        mapcount = folio_mapcount(entry);
+
+out:
+    xa_unlock_irq(&mapping->i_pages);
+    return mapcount;
+}
+
+static int swapctl_get_pte_info(struct mm_struct *mm, unsigned long address,
+                                struct swapctl_pte_info *info)
+{
+    pgd_t *pgd;
+    p4d_t *p4d;
+    pud_t *pud;
+    pmd_t *pmd;
+    pte_t *pte;
+    pte_t pteval;
+    spinlock_t *ptl;
+
+    memset(info, 0, sizeof(*info));
+
+    pgd = pgd_offset(mm, address);
+    if (pgd_none(*pgd))
+        return 0;
+    if (pgd_bad(*pgd))
+        return -EINVAL;
+
+    p4d = p4d_offset(pgd, address);
+    if (p4d_none(*p4d))
+        return 0;
+    if (p4d_bad(*p4d))
+        return -EINVAL;
+
+    pud = pud_offset(p4d, address);
+    if (pud_none(*pud))
+        return 0;
+    if (pud_bad(*pud))
+        return -EINVAL;
+
+    pmd = pmd_offset(pud, address);
+    if (pmd_none(*pmd))
+        return 0;
+    if (pmd_bad(*pmd))
+        return -EINVAL;
+    if (pmd_trans_huge(*pmd) || pmd_devmap(*pmd))
+        return -EOPNOTSUPP;
+
+    ptl = pte_lockptr(mm, pmd);
+    spin_lock(ptl);
+    pte = pte_offset_kernel(pmd, address);
+    pteval = ptep_get(pte);
+    info->pte_value = pte_val(pteval);
+
+    if (pte_none(pteval)) {
+        info->state = SWAPCTL_PTE_NONE;
+    } else if (pte_present(pteval)) {
+        info->state = SWAPCTL_PTE_PRESENT;
+        info->pfn = pte_pfn(pteval);
+    } else if (is_swap_pte(pteval)) {
+        swp_entry_t entry = pte_to_swp_entry(pteval);
+
+        info->swp_type = swp_type(entry);
+        info->swp_offset = swp_offset(entry);
+
+        if (is_named_swap_entry(entry)) {
+            info->state = SWAPCTL_PTE_NAMED_SWAP;
+            info->named_swap_index = named_swap_entry_index(entry);
+        } else if (non_swap_entry(entry)) {
+            info->state = SWAPCTL_PTE_NON_SWAP;
+        } else {
+            info->state = SWAPCTL_PTE_SWAP;
+        }
+    }
+    spin_unlock(ptl);
+
+    return 0;
+}
+
+static int swapctl_get_pte_value(struct mm_struct *mm, unsigned long address,
+                                 unsigned long *pte_value)
+{
+    struct swapctl_pte_info info;
+    int ret;
+
+    ret = swapctl_get_pte_info(mm, address, &info);
+    if (ret)
+        return ret;
+
+    *pte_value = info.pte_value;
+    return 0;
 }
 
 static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
@@ -346,6 +498,55 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
         }
         kfree(path_buf);
         kfree(args);
+        return 0;
+    }
+    case IOCTL_GET_PT_PAGE_FROM_ADDRESS: {
+        unsigned long address;
+        unsigned long pte_value;
+        int ret;
+
+        if (copy_from_user(&address, (void __user *)arg, sizeof(address)))
+            return -EFAULT;
+
+        mmap_read_lock(current->mm);
+        ret = swapctl_get_pte_value(current->mm, address, &pte_value);
+        mmap_read_unlock(current->mm);
+        if (ret)
+            return ret;
+
+        if (copy_to_user((void __user *)arg, &pte_value, sizeof(pte_value)))
+            return -EFAULT;
+
+        return 0;
+    }
+    case IOCTL_FOLIO_GET_MAPCOUNT: {
+        //only works if there were no forks.
+        struct folio_get_mapcount_args args;
+        struct vm_area_struct *vma;
+        pgoff_t index;
+
+        if (copy_from_user(&args, (void __user *)arg, sizeof(args)))
+            return -EFAULT;
+
+        args.mapcount = 0;
+
+        mmap_read_lock(current->mm);
+        vma = find_vma(current->mm, (unsigned long)args.virtual_address);
+        if (!vma || (unsigned long)args.virtual_address < vma->vm_start) {
+            mmap_read_unlock(current->mm);
+            return -EINVAL;
+        }
+
+        if (vma->vm_file) {
+            index = linear_page_index(vma, (unsigned long)args.virtual_address);
+            args.mapcount = swapctl_named_swap_mapcount(vma->vm_file->f_mapping,
+                                                        index);
+        }
+        mmap_read_unlock(current->mm);
+
+        if (copy_to_user((void __user *)arg, &args, sizeof(args)))
+            return -EFAULT;
+
         return 0;
     }
     default:
