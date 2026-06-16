@@ -17,11 +17,12 @@
 #define RMAP_WALK_MAX_VMAS 64
 #define IOCTL_GET_SWAP_OFFSET_FROM_PAGE _IOR('s', 0x01, unsigned long)
 #define IOCTL_VMA_INFO _IOR('s', 0x02, struct vma_info_args)
-#define ICOTL_FOLIO_LRU_INFO _IOR('s', 0x03, struct folio_info_args)
-#define ICOTL_GET_CURRENT_CGROUP _IOR('s', 0x04, unsigned short)
+#define IOCTL_FOLIO_LRU_INFO _IOR('s', 0x03, struct folio_info_args)
+#define IOCTL_GET_CURRENT_CGROUP _IOR('s', 0x04, unsigned short)
 #define IOCTL_ANON_VMA_INFO _IOR('s', 0x05, struct anon_vma_info_args)
-#define ICOTL_COUNT_RMAP_VMAS _IOWR('s', 0x06, struct rmap_walk_args)
+#define IOCTL_COUNT_RMAP_VMAS _IOWR('s', 0x06, struct rmap_walk_args)
 #define IOCTL_GET_SWAP_FILE_PATH _IOWR('s', 0x07, struct swap_file_info)
+#define IOCTL_ANON_VMA_INFO_FROM_VMA _IOR('s', 0x08, struct anon_vma_info_args)
 
 struct swap_file_info {
     void *virtual_address;
@@ -38,6 +39,7 @@ struct vma_info_args {
 };
 struct anon_vma_info_args {
     void *virtual_address;
+    void *named_swap_file;
     void *anon_vma;
     void *root;
     void *parent;
@@ -132,17 +134,18 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
         args.refcount = 0;
         args.num_children = 0;
         args.num_active_vmas = 0;
+        args.named_swap_file = NULL;
 
         if (anon_vma) {
             anon_vma_lock_read(anon_vma);
             args.root = anon_vma->root;
             args.parent = anon_vma->parent;
-            args.refcount = atomic_read(&anon_vma->refcount);
+            args.refcount = atomic_read(&anon_vma->refcount) - 1;
             args.num_children = anon_vma->num_children;
             args.num_active_vmas = anon_vma->num_active_vmas;
+            args.named_swap_file = anon_vma->named_swap_file;
             anon_vma_unlock_read(anon_vma);
-            if (atomic_dec_and_test(&anon_vma->refcount))
-		        __put_anon_vma(anon_vma);
+            put_anon_vma(anon_vma);
         }
 
         if (copy_to_user((void __user *)arg, &args, sizeof(args)))
@@ -150,7 +153,44 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 
         return 0;
     }
-    case ICOTL_COUNT_RMAP_VMAS: {
+
+    case IOCTL_ANON_VMA_INFO_FROM_VMA: {
+        struct anon_vma_info_args args;
+        struct vm_area_struct *vma;
+        if (copy_from_user(&args, (void __user *)arg, sizeof(args)))
+            return -EFAULT;
+
+        mmap_read_lock(current->mm);
+        vma = find_vma(current->mm, (unsigned long)args.virtual_address);
+        if (!vma) {
+            mmap_read_unlock(current->mm);
+            return -EINVAL;
+        }
+        args.anon_vma = NULL;
+        args.root = NULL;
+        args.parent = NULL;
+        args.refcount = 0;
+        args.num_children = 0;
+        args.num_active_vmas = 0;
+        args.named_swap_file = NULL;
+        if(vma->anon_vma) {
+            anon_vma_lock_read(vma->anon_vma);
+            args.named_swap_file = vma->anon_vma->named_swap_file;
+            args.anon_vma = vma->anon_vma;
+            args.root = vma->anon_vma->root;
+            args.parent = vma->anon_vma->parent;
+            args.refcount = atomic_read(&vma->anon_vma->refcount);
+            args.num_children = vma->anon_vma->num_children;
+            args.num_active_vmas = vma->anon_vma->num_active_vmas;
+            anon_vma_unlock_read(vma->anon_vma);
+        }
+        mmap_read_unlock(current->mm);
+        if (copy_to_user((void __user *)arg, &args, sizeof(args)))
+            return -EFAULT;
+        return 0;
+    }
+
+    case IOCTL_COUNT_RMAP_VMAS: {
         struct rmap_walk_args args;
         unsigned int nr_vmas = 0;
         struct page *page = NULL;
@@ -187,7 +227,7 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 
         return 0;
     }
-    case ICOTL_FOLIO_LRU_INFO: {
+    case IOCTL_FOLIO_LRU_INFO: {
         struct folio_info_args args;
         if (copy_from_user(&args, (void __user *)arg, sizeof(args)))
             return -EFAULT;
@@ -208,6 +248,7 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
         args.is_anon = folio_test_anon(folio);
         args.is_file = folio_is_file_lru(folio);
         args.has_mapping = folio->mapping != NULL;
+        args.virtual_address = (void*)folio;
         struct mem_cgroup *memcg = folio_memcg(folio);
         if (memcg) {
             args.memory_cgroup = mem_cgroup_id(memcg);
@@ -218,7 +259,7 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 
         return 0;
     }
-    case ICOTL_GET_CURRENT_CGROUP: {
+    case IOCTL_GET_CURRENT_CGROUP: {
         unsigned short memcg_id = -1;
         struct mem_cgroup *memcg = mem_cgroup_from_task(current);
         if (memcg) {
@@ -284,10 +325,9 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
         }
         named_swap_file = anon_vma->named_swap_file;
         if(named_swap_file) {
-            path = file_path(named_swap_file, path_buf, PATH_MAX);
+            path = named_swap_file_path(named_swap_file, path_buf, PATH_MAX);
             if (IS_ERR(path)) {
-                if (atomic_dec_and_test(&anon_vma->refcount))
-                    __put_anon_vma(anon_vma);
+                put_anon_vma(anon_vma);
                 put_page(page);
                 kfree(path_buf);
                 kfree(args);
@@ -297,8 +337,7 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
             args->offset = folio->index << PAGE_SHIFT;
             args->size = folio_size(folio);
         }
-        if (atomic_dec_and_test(&anon_vma->refcount))
-            __put_anon_vma(anon_vma);
+        put_anon_vma(anon_vma);
         put_page(page);
         if (copy_to_user((void __user *)arg, args, sizeof(*args))) {
             kfree(path_buf);
