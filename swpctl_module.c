@@ -67,6 +67,13 @@ struct folio_info_args {
     unsigned int has_mapping;
     unsigned short memory_cgroup;
 };
+struct swap_file_info_mremap{
+    void *virtual_address;
+    char path[PATH_MAX];
+    unsigned long offset;
+    unsigned long size; //original folio size
+    unsigned long file_size;   // NEW: Entire backing file size
+}
 
 static bool swapctl_rmap_one(struct folio *folio, struct vm_area_struct *vma,
                              unsigned long addr, void *arg)
@@ -336,6 +343,90 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
             strscpy(args->path, path, sizeof(args->path));
             args->offset = folio->index << PAGE_SHIFT;
             args->size = folio_size(folio);
+        }
+        put_anon_vma(anon_vma);
+        put_page(page);
+        if (copy_to_user((void __user *)arg, args, sizeof(*args))) {
+            kfree(path_buf);
+            kfree(args);
+            return -EFAULT;
+        }
+        kfree(path_buf);
+        kfree(args);
+        return 0;
+    }
+    case IOCTL_GET_SWAP_FILE_PATH_MREMAP: {
+        //exactly the same as previous - just returning the file size as well through inode
+        struct swap_file_info_mremap *args;
+        char *path_buf;
+        char *path;
+        struct page *page = NULL;
+        struct folio *folio;
+        struct anon_vma *anon_vma;
+        struct file *named_swap_file;
+        int ret;
+
+        args = kzalloc(sizeof(*args), GFP_KERNEL);
+        if (!args)
+            return -ENOMEM;
+
+        path_buf = kmalloc(PATH_MAX, GFP_KERNEL);
+        if (!path_buf) {
+            kfree(args);
+            return -ENOMEM;
+        }
+
+        if (copy_from_user(args, (void __user *)arg, sizeof(*args))) {
+            kfree(path_buf);
+            kfree(args);
+            return -EFAULT;
+        }
+
+        args->path[0] = '\0';
+        args->offset = 0;
+        args->size = 0;
+
+        ret = get_user_pages_fast((unsigned long)args->virtual_address, 1, 0, &page);
+        if (ret != 1) {
+            pr_err("swapctl: Failed to get page for user address %px (ret=%d)\n",
+                args->virtual_address, ret);
+            kfree(path_buf);
+            kfree(args);
+            return -EFAULT;
+        }
+        folio = page_folio(page);
+        if(!folio) {
+            pr_err("swapctl: Invalid folio for address %px\n", args->virtual_address);
+            put_page(page);
+            kfree(path_buf);
+            kfree(args);
+            return -EINVAL;
+        }
+        anon_vma = folio_get_anon_vma(folio);
+        if(!anon_vma) {
+            pr_err("swapctl: Invalid anon_vma for address %px\n", args->virtual_address);
+            put_page(page);
+            kfree(path_buf);
+            kfree(args);
+            return -EINVAL;
+        }
+        //here
+        named_swap_file = anon_vma->named_swap_file;
+        if(named_swap_file) {
+            path = named_swap_file_path(named_swap_file, path_buf, PATH_MAX);
+            if (IS_ERR(path)) {
+                put_anon_vma(anon_vma);
+                put_page(page);
+                kfree(path_buf);
+                kfree(args);
+                return PTR_ERR(path);
+            }
+            strscpy(args->path, path, sizeof(args->path));
+            args->offset = folio->index << PAGE_SHIFT;
+            args->size = folio_size(folio);
+
+            //addition
+            args->file_size = i_size_read(file_inode(named_swap_file));
         }
         put_anon_vma(anon_vma);
         put_page(page);

@@ -22,6 +22,7 @@ REGISTER_TEST(test_swap_file_delete_exit);
 REGISTER_TEST(test_zero_file);
 REGISTER_TEST(test_read_first_fault);
 REGISTER_TEST(test_write_fault);
+REGISTER_TEST(test_mremap_named_swap);
 
 void test_write_fault(void) {
     unsigned char *addr = mmap(NULL, PAGE_SIZE * MIN_PAGE_NAMED_SWAP_MMAP, PROT_READ | PROT_WRITE,
@@ -390,6 +391,51 @@ void test_mulcount_rmap_vmas_multi_fork(void) {
     }
 
 }
+
+void test_mremap_named_swap(void){
+    size_t initial_size = PAGE_SIZE * 4;
+    size_t expanded_size = PAGE_SIZE * 8;
+
+    // 1. Initial memory mapping with MAP_NAMED_SWAP
+    unsigned char *addr = mmap(NULL, initial_size, PROT_READ | PROT_WRITE,
+                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP, -1, 0);
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED) return;
+
+    // 2. Fault in initial pages and verify anon_vma links
+    for (int i = 0; i < initial_size; i += PAGE_SIZE) {
+        addr[i] = 1; // Trigger write fault
+        
+        // Check that the folio's anon_vma matches the VMA's anon_vma
+        ASSERT_EQ_ANON_VMA(ANON_VMA_VMA, addr + i,
+                           ANON_VMA_FOLIO, addr + i);
+    }
+
+    // 3. Verify the initial backing file size
+    struct swap_file_info_mremap initial_info = get_swap_file_info_mremap(addr);
+    ASSERT_EQ(initial_info.file_size, initial_size);
+
+    // 4. Expand the mapping using mremap
+    unsigned char *new_addr = mremap(addr, initial_size, expanded_size, 0);
+    ASSERT(new_addr != MAP_FAILED);
+    if (new_addr == MAP_FAILED) return;
+
+    // 5. Fault in the newly expanded pages and verify anon_vma links
+    for (int i = initial_size; i < expanded_size; i += PAGE_SIZE) {
+        new_addr[i] = 2; // Trigger write fault on new pages
+        
+        // The newly allocated folios should share the same anon_vma
+        ASSERT_EQ_ANON_VMA(ANON_VMA_VMA, new_addr + i,
+                           ANON_VMA_FOLIO, new_addr + i);
+    }
+
+   // 6. Verify the backing file was enlarged by the kernel
+    struct swap_file_info_mremap expanded_info = get_swap_file_info_mremap(new_addr);
+    ASSERT_EQ(expanded_info.file_size, expanded_size);
+
+    munmap(new_addr, expanded_size); 
+}
+
 static void print_usage(char *argv0) {
     printf("Usage: %s [--trace]\n", argv0);
 }

@@ -63,6 +63,13 @@ struct swap_file_info {
     unsigned long offset;
     unsigned long size;
 };
+struct swap_file_info_mremap{
+    void *virtual_address;
+    char path[PATH_MAX];
+    unsigned long offset;
+    unsigned long size; //original folio size
+    unsigned long file_size;   // NEW: Entire backing file size
+}
 
 #define IOCTL_VMA_INFO _IOR('s', 0x02, struct vma_info_args)
 #define IOCTL_ANON_VMA_INFO _IOR('s', 0x05, struct anon_vma_info_args)
