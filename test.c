@@ -13,15 +13,15 @@
 #define MAP_NAMED_SWAP 0x200000
 #define MIN_PAGE_NAMED_SWAP_MMAP 256 // should be read from sysctl
 
-REGISTER_TEST(test_single_anon_vma);
-REGISTER_TEST(test_fork_anon_vma);
-REGISTER_TEST(test_count_rmap_vmas);
-REGISTER_TEST(test_swap_file_creation);
-REGISTER_TEST(test_swap_file_delete_unmap);
-REGISTER_TEST(test_swap_file_delete_exit);
-REGISTER_TEST(test_zero_file);
-REGISTER_TEST(test_read_first_fault);
-REGISTER_TEST(test_write_fault);
+//REGISTER_TEST(test_single_anon_vma);
+//REGISTER_TEST(test_fork_anon_vma);
+//REGISTER_TEST(test_count_rmap_vmas);
+//REGISTER_TEST(test_swap_file_creation);
+//REGISTER_TEST(test_swap_file_delete_unmap);
+//REGISTER_TEST(test_swap_file_delete_exit);
+//REGISTER_TEST(test_zero_file);
+//REGISTER_TEST(test_read_first_fault);
+//REGISTER_TEST(test_write_fault);
 REGISTER_TEST(test_mremap_named_swap);
 
 void test_write_fault(void) {

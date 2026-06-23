@@ -1,5 +1,5 @@
 # -------- CONFIG --------
-KDIR ?= /usr/src/linux-6.14-rc5
+KDIR ?= /usr/src/nswap
 PWD := $(CURDIR)
 SUDO := $(shell if [ "$$(id -u)" = 0 ]; then echo ""; else echo "sudo"; fi)
 

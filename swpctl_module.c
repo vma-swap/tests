@@ -74,7 +74,7 @@ struct swap_file_info_mremap{
     unsigned long offset;
     unsigned long size; //original folio size
     unsigned long file_size;   // NEW: Entire backing file size
-}
+};
 
 static bool swapctl_rmap_one(struct folio *folio, struct vm_area_struct *vma,
                              unsigned long addr, void *arg)
