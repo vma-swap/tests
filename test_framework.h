@@ -132,41 +132,44 @@ static inline void assert_eq_anon_vma_impl(
     struct anon_vma_info_args right =
         get_anon_vma_info_from_source(right_source, right_addr);
 
-    if (left.anon_vma != right.anon_vma ||
+    int failed = (left.anon_vma != right.anon_vma ||
         left.root != right.root ||
         left.parent != right.parent ||
         left.refcount != right.refcount ||
         left.num_children != right.num_children ||
         left.num_active_vmas != right.num_active_vmas ||
-        left.named_swap_file != right.named_swap_file) {
-        fprintf(stderr, COLOR_RED "FAIL" COLOR_RESET
-                " [%s:%d] ASSERT_EQ_ANON_VMA(%s, %s)\n"
-                "  left source:       %s\n"
-                "  right source:      %s\n"
-                "  left anon_vma:     %p\n"
-                "  right anon_vma:    %p\n"
-                "  left root:         %p\n"
-                "  right root:        %p\n"
-                "  left parent:       %p\n"
-                "  right parent:      %p\n"
-                "  left refcount:     %lu\n"
-                "  right refcount:    %lu\n"
-                "  left children:     %lu\n"
-                "  right children:    %lu\n"
-                "  left active vmas:  %lu\n"
-                "  right active vmas: %lu\n"
-                "  left swap file:    %p\n"
-                "  right swap file:   %p\n",
-                file, line, left_expr, right_expr,
-                anon_vma_source_name(left_source),
-                anon_vma_source_name(right_source),
-                left.anon_vma, right.anon_vma,
-                left.root, right.root,
-                left.parent, right.parent,
-                left.refcount, right.refcount,
-                left.num_children, right.num_children,
-                left.num_active_vmas, right.num_active_vmas,
-                left.named_swap_file, right.named_swap_file);
+        left.named_swap_file != right.named_swap_file);
+
+    fprintf(stderr, "%s [%s:%d] ASSERT_EQ_ANON_VMA(%s, %s)\n"
+            "  left source:       %s\n"
+            "  right source:      %s\n"
+            "  left anon_vma:     %p\n"
+            "  right anon_vma:    %p\n"
+            "  left root:         %p\n"
+            "  right root:        %p\n"
+            "  left parent:       %p\n"
+            "  right parent:      %p\n"
+            "  left refcount:     %lu\n"
+            "  right refcount:    %lu\n"
+            "  left children:     %lu\n"
+            "  right children:    %lu\n"
+            "  left active vmas:  %lu\n"
+            "  right active vmas: %lu\n"
+            "  left swap file:    %p\n"
+            "  right swap file:   %p\n",
+        failed ? COLOR_RED "FAIL" COLOR_RESET : COLOR_GREEN "PASS" COLOR_RESET,
+        file, line, left_expr, right_expr,
+        anon_vma_source_name(left_source),
+        anon_vma_source_name(right_source),
+        left.anon_vma, right.anon_vma,
+        left.root, right.root,
+        left.parent, right.parent,
+        left.refcount, right.refcount,
+        left.num_children, right.num_children,
+        left.num_active_vmas, right.num_active_vmas,
+        left.named_swap_file, right.named_swap_file);
+
+    if (failed) {
         current_test_failed = 1;
     }
 }
@@ -226,13 +229,14 @@ static inline void assert_neq_anon_vma_impl(
     __auto_type _assert_b = (b); \
     unsigned long long _assert_a_hex = (unsigned long long)_assert_a; \
     unsigned long long _assert_b_hex = (unsigned long long)_assert_b; \
-    if (_assert_a_hex != _assert_b_hex) { \
-        fprintf(stderr, COLOR_RED "FAIL" COLOR_RESET \
-                " [%s:%d] %s == %s\n" \
-                "  left:  0x%llx\n" \
-                "  right: 0x%llx\n", \
-                __FILE__, __LINE__, #a, #b, \
-                _assert_a_hex, _assert_b_hex); \
+    int _failed = (_assert_a_hex != _assert_b_hex); \
+    fprintf(stderr, "%s [%s:%d] %s == %s\n" \
+            "  left:  0x%llx\n" \
+            "  right: 0x%llx\n", \
+            _failed ? COLOR_RED "FAIL" COLOR_RESET : COLOR_GREEN "PASS" COLOR_RESET, \
+            __FILE__, __LINE__, #a, #b, \
+            _assert_a_hex, _assert_b_hex); \
+    if (_failed) { \
         current_test_failed = 1; \
     } \
 } while (0)
@@ -303,13 +307,14 @@ static inline unsigned long assert_named_swap_file_for_addr_impl(
     __auto_type _assert_b = (b); \
     unsigned long long _assert_a_hex = (unsigned long long)_assert_a; \
     unsigned long long _assert_b_hex = (unsigned long long)_assert_b; \
-    if (_assert_a_hex == _assert_b_hex) { \
-        fprintf(stderr, COLOR_RED "FAIL" COLOR_RESET \
-                " [%s:%d] %s != %s\n" \
-                "  left:  0x%llx\n" \
-                "  right: 0x%llx\n", \
-                __FILE__, __LINE__, #a, #b, \
-                _assert_a_hex, _assert_b_hex); \
+    int _failed = (_assert_a_hex == _assert_b_hex); \
+    fprintf(stderr, "%s [%s:%d] %s != %s\n" \
+            "  left:  0x%llx\n" \
+            "  right: 0x%llx\n", \
+            _failed ? COLOR_RED "FAIL" COLOR_RESET : COLOR_GREEN "PASS" COLOR_RESET, \
+            __FILE__, __LINE__, #a, #b, \
+            _assert_a_hex, _assert_b_hex); \
+    if (_failed) { \
         current_test_failed = 1; \
     } \
 } while (0)
