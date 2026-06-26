@@ -62,12 +62,6 @@ struct swap_file_info {
     char path[PATH_MAX];
     unsigned long offset;
     unsigned long size;
-};
-struct swap_file_info_mremap{
-    void *virtual_address;
-    char path[PATH_MAX];
-    unsigned long offset;
-    unsigned long size; //original folio size
     unsigned long file_size;   // NEW: Entire backing file size
 };
 

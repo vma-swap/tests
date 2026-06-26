@@ -23,7 +23,6 @@
 #define IOCTL_COUNT_RMAP_VMAS _IOWR('s', 0x06, struct rmap_walk_args)
 #define IOCTL_GET_SWAP_FILE_PATH _IOWR('s', 0x07, struct swap_file_info)
 #define IOCTL_ANON_VMA_INFO_FROM_VMA _IOR('s', 0x08, struct anon_vma_info_args)
-#define IOCTL_GET_SWAP_FILE_PATH_MREMAP _IOWR('s', 0x09, struct swap_file_info_mremap)
 
 struct swap_file_info {
     void *virtual_address;
