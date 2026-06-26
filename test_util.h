@@ -72,7 +72,6 @@ struct swap_file_info {
 #define IOCTL_FOLIO_LRU_INFO _IOR('s', 0x03, struct folio_info_args)
 #define IOCTL_GET_CURRENT_CGROUP _IOR('s', 0x04, unsigned short)
 #define IOCTL_ANON_VMA_INFO_FROM_VMA _IOR('s', 0x08, struct anon_vma_info_args)
-#define IOCTL_GET_SWAP_FILE_PATH_MREMAP _IOWR('s', 0x09, struct swap_file_info_mremap)
 
 struct vma_info_args get_vma_info(void *addr);
 struct anon_vma_info_args get_anon_vma_info(void *addr);
