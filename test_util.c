@@ -99,19 +99,6 @@ struct swap_file_info get_swap_file_info(void *addr) {
     return args;
 }
 
-struct swap_file_info_mremap get_swap_file_info_mremap(void *addr) {
-    struct swap_file_info_mremap args = {0};
-    args.virtual_address = addr;
-
-    int fd = open_swapctl();
-    if (fd < 0)
-        return args;
-
-    if (ioctl(fd, IOCTL_GET_SWAP_FILE_PATH_MREMAP, &args) < 0)
-        perror("Failed to get swap file info");
-    close(fd);
-    return args;
-}
 
 int parse_named_swap_index(const char *path, unsigned long *index) {
     const char *digits;

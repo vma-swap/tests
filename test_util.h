@@ -85,7 +85,6 @@ struct anon_vma_info_args get_anon_vma_info(void *addr);
 struct anon_vma_info_args get_anon_vma_info_from_vma(void *addr);
 unsigned int count_rmap_vmas(void *addr);
 struct swap_file_info get_swap_file_info(void *addr);
-struct swap_file_info_mremap get_swap_file_info_mremap(void *addr);
 struct folio_info_args get_folio_info(void *addr);
 unsigned short get_current_cgroup(void);
 int parse_named_swap_index(const char *path, unsigned long *index);
