@@ -418,13 +418,20 @@ void test_mremap_enlarge(void){
     ASSERT_EQ(initial_info.file_size, initial_size);
 
     // 4. Expand the mapping using mremap
-    unsigned char *new_addr = mremap(addr, initial_size, expanded_size, 0);
+    unsigned char *new_addr = mremap(addr, initial_size, expanded_size, 0); 
+
+
+    if (new_addr == MAP_FAILED) {
+    perror("mremap");
+    printf("errno=%d\n", errno);
+}
     ASSERT(new_addr != MAP_FAILED);
     if (new_addr == MAP_FAILED) return;
 
     // 5. Fault in the newly expanded pages and verify anon_vma links
     for (int i = initial_size; i < expanded_size; i += PAGE_SIZE) {
-        new_addr[i] = 2; // Trigger write fault on new pages
+        new_addr[i] = i/PAGE_SIZE; // Trigger write fault on new pages
+
         
         // The newly allocated folios should share the same anon_vma
         ASSERT_EQ_ANON_VMA(ANON_VMA_VMA, new_addr + i,

@@ -12,6 +12,7 @@
 #include <linux/rmap.h>
 #include <linux/limits.h>
 #include <linux/string.h>
+#include <linux/mm.h>
 
 #define DEVICE_NAME "swapctl"
 #define RMAP_WALK_MAX_VMAS 64
@@ -339,7 +340,11 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
             args->size = folio_size(folio);
 
             //addition
-            args->file_size = i_size_read(file_inode(named_swap_file)); //use new function for size
+            vma = vma_lookup(mm, args->virtual_address);
+            if (!vma) {
+                return -EINVAL;
+            }
+            args->file_size = named_swap_file_size(vma); //new functino for size. correct usage?
         }
         put_anon_vma(anon_vma);
         put_page(page);
