@@ -279,6 +279,8 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
         struct folio *folio;
         struct anon_vma *anon_vma;
         struct file *named_swap_file;
+        struct mm_struct *mm = current->mm;
+        struct vm_area_struct* vma;
         int ret;
 
         args = kzalloc(sizeof(*args), GFP_KERNEL);
