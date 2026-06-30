@@ -4,6 +4,7 @@
 #include <linux/miscdevice.h>
 #include <linux/uaccess.h>
 #include <linux/swap.h>
+#include <linux/mm.h>
 #include <linux/mutex.h>
 #include <linux/plist.h>
 #include <linux/slab.h>
@@ -28,10 +29,16 @@
 #define IOCTL_ANON_VMA_INFO_FROM_VMA _IOR('s', 0x08, struct anon_vma_info_args)
 #define IOCTL_GET_PT_PAGE_FROM_ADDRESS _IOWR('s', 0x09, unsigned long)
 #define IOCTL_FOLIO_GET_MAPCOUNT _IOWR('s', 0x10, struct folio_get_mapcount_args)
+#define IOCTL_NAMED_SWAP_ALIAS_COUNT _IOWR('s', 0x11, struct named_swap_alias_count_args)
 
 struct folio_get_mapcount_args {
     void *virtual_address;
     unsigned long mapcount;
+};
+
+struct named_swap_alias_count_args {
+    void *virtual_address;
+    unsigned int count;
 };
 
 struct swap_file_info {
@@ -103,23 +110,6 @@ static bool swapctl_rmap_one(struct folio *folio, struct vm_area_struct *vma,
     return true;
 }
 
-#define SWAPCTL_WORKINGSET_SHIFT 1
-#define SWAPCTL_EVICTION_SHIFT ((BITS_PER_LONG - BITS_PER_XA_VALUE) + \
-                                SWAPCTL_WORKINGSET_SHIFT + NODES_SHIFT + \
-                                MEM_CGROUP_ID_SHIFT)
-#define SWAPCTL_NAMED_SWAP_MC_SHIFT (BITS_PER_LONG - SWAPCTL_EVICTION_SHIFT)
-#define SWAPCTL_NAMED_SWAP_MC_MASK ((1UL << SWAPCTL_NAMED_SWAP_MC_SHIFT) - 1)
-
-static int swapctl_named_swap_shadow_mapcount(void *shadow)
-{
-    unsigned long value = xa_to_value(shadow);
-
-    if (!(value >> SWAPCTL_NAMED_SWAP_MC_SHIFT))
-        return 0;
-
-    return value & SWAPCTL_NAMED_SWAP_MC_MASK;
-}
-
 static int swapctl_named_swap_mapcount(struct address_space *mapping,
                                        pgoff_t index)
 {
@@ -134,9 +124,7 @@ static int swapctl_named_swap_mapcount(struct address_space *mapping,
     if (!entry)
         goto out;
 
-    if (xa_is_value(entry))
-        mapcount = swapctl_named_swap_shadow_mapcount(entry);
-    else
+    if (!xa_is_value(entry))
         mapcount = folio_mapcount(entry);
 
 out:
@@ -542,6 +530,33 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
             args.mapcount = swapctl_named_swap_mapcount(vma->vm_file->f_mapping,
                                                         index);
         }
+        mmap_read_unlock(current->mm);
+
+        if (copy_to_user((void __user *)arg, &args, sizeof(args)))
+            return -EFAULT;
+
+        return 0;
+    }
+    case IOCTL_NAMED_SWAP_ALIAS_COUNT: {
+        struct named_swap_alias_count_args args;
+        struct vm_area_struct *vma;
+        unsigned long address;
+
+        if (copy_from_user(&args, (void __user *)arg, sizeof(args)))
+            return -EFAULT;
+
+        address = (unsigned long)args.virtual_address;
+        args.count = 0;
+
+        mmap_read_lock(current->mm);
+        vma = find_vma(current->mm, address);
+        if (!vma || address < vma->vm_start) {
+            mmap_read_unlock(current->mm);
+            return -EINVAL;
+        }
+
+        if (vma_is_named_swap(vma))
+            args.count = named_swap_same_file_pte_count(vma, address);
         mmap_read_unlock(current->mm);
 
         if (copy_to_user((void __user *)arg, &args, sizeof(args)))

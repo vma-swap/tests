@@ -1,5 +1,6 @@
 # Userspace build output
 /test_runner
+/named_swap_reclaim_repro
 
 # Kernel module build output
 *.ko

@@ -9,7 +9,7 @@ MODULE := swpctl_module.ko
 KDIR_READY := $(wildcard $(KDIR)/Makefile)
 
 # Userspace test
-TEST_SRC := test.c test_util.c
+TEST_SRC := test.c test_main.c test_helper.c test_util.c
 TEST_BIN := test_runner
 CFLAGS := -Wall -Wextra -g
 
@@ -50,7 +50,7 @@ install_module:
 	$(SUDO) insmod $(MODULE)
 
 # Build the userspace test binary
-$(TEST_BIN): $(TEST_SRC) test_framework.h test_util.h
+$(TEST_BIN): $(TEST_SRC) test_framework.h test_helper.h test_util.h
 	$(CC) $(CFLAGS) -o $@ $(TEST_SRC)
 
 clean:

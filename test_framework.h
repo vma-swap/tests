@@ -24,8 +24,8 @@ typedef struct test_case {
     struct test_case *next;
 } test_case_t;
 
-static test_case_t *test_list_head = NULL;
-static int current_test_failed = 0;
+extern test_case_t *test_list_head;
+extern int current_test_failed;
 
 typedef struct assert_signal_ctx {
     int expected_signal;

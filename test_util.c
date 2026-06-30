@@ -145,6 +145,19 @@ unsigned long get_folio_mapcount(void *addr) {
     close(fd);
     return args.mapcount;
 }
+
+unsigned int get_named_swap_alias_count(void *addr) {
+    struct named_swap_alias_count_args args = {0};
+    args.virtual_address = addr;
+    int fd = open_swapctl();
+    if (fd < 0)
+        return 0;
+    if (ioctl(fd, IOCTL_NAMED_SWAP_ALIAS_COUNT, &args) < 0)
+        perror("Failed to get named-swap alias count");
+    close(fd);
+    return args.count;
+}
+
 int parse_named_swap_index(const char *path, unsigned long *index) {
     const char *digits;
     char *end;

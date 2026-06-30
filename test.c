@@ -1,18 +1,16 @@
+#define _GNU_SOURCE
 #include "test_framework.h"
-#include "test_util.h"
+#include "test_helper.h"
 
-#include <getopt.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
 #include <unistd.h>
-
-#define PAGE_SIZE 4096
-#define MAP_NAMED_SWAP 0x200000
-#define MIN_PAGE_NAMED_SWAP_MMAP 256 // should be read from sysctl
-#define VM_MEMORY 130*(1024*1024) // 130MB
 
 REGISTER_TEST(test_single_anon_vma);
 REGISTER_TEST(test_fork_anon_vma);
@@ -22,9 +20,57 @@ REGISTER_TEST(test_swap_file_delete_unmap);
 REGISTER_TEST(test_swap_file_delete_exit);
 REGISTER_TEST(test_zero_file);
 REGISTER_TEST(test_read_first_fault);
+REGISTER_TEST(test_read_fork_write_fault);
 REGISTER_TEST(test_write_fault);
 REGISTER_TEST(test_swapout_folio);
+REGISTER_TEST(test_named_swap_alias_count_pageout);
+REGISTER_TEST(test_file_mmap_pageout_preserves_data);
+REGISTER_TEST(test_named_swap_pageout_preserves_data);
+REGISTER_TEST(test_memory_pressure_in_disk);
 REGISTER_TEST(test_memory_pressure);
+
+void test_file_mmap_pageout_preserves_data(void) {
+    size_t len = PAGEOUT_TEST_SIZE;
+    int fd = open(PAGEOUT_FILE_PATH,
+                  O_CREAT | O_TRUNC | O_RDWR | O_CLOEXEC, 0600);
+    unsigned char *addr;
+    int fallocate_ret;
+
+    ASSERT_NEQ(fd, -1);
+    if (fd < 0)
+        return;
+
+    fallocate_ret = posix_fallocate(fd, 0, (off_t)len);
+    if (fallocate_ret) {
+        errno = fallocate_ret;
+        perror("posix_fallocate pageout test file");
+        ASSERT_EQ(ftruncate(fd, (off_t)len), 0);
+    }
+
+    addr = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    ASSERT(addr != MAP_FAILED);
+    if (addr != MAP_FAILED) {
+        assert_pageout_preserves_data(addr, len);
+        munmap(addr, len);
+    }
+
+    close(fd);
+    unlink(PAGEOUT_FILE_PATH);
+}
+
+void test_named_swap_pageout_preserves_data(void) {
+    size_t len = PAGEOUT_TEST_SIZE;
+    unsigned char *addr = mmap(NULL, len, PROT_READ | PROT_WRITE,
+                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP,
+                               -1, 0);
+
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED)
+        return;
+
+    assert_pageout_preserves_data(addr, len);
+    munmap(addr, len);
+}
 
 void test_memory_pressure(void) {
     unsigned char *addr = mmap(NULL, VM_MEMORY, PROT_READ | PROT_WRITE,
@@ -37,18 +83,53 @@ void test_memory_pressure(void) {
             if (it == 0) {
                 addr[i] = i%256;
                 ASSERT_EQ_AT(addr + i, i%256);
-                ASSERT_EQ(get_folio_mapcount(addr + i), 1);
+                ASSERT_EQ(count_rmap_vmas(addr + i), 1);
             }
-            unsigned long pte_value = get_pte_value(addr + i);
-            // printf("pte_value: %lx\n", pte_value);
-            ASSERT_EQ(get_folio_mapcount(addr + i), 1);
             addr[i]++;
             ASSERT_EQ_AT(addr + i, i%256 + (it + 1));
-            ASSERT_EQ(get_folio_mapcount(addr + i), 1);
+            ASSERT_EQ(count_rmap_vmas(addr + i), 1);
         }
     }
 
-    munmap(addr, PAGE_SIZE * 2);
+    munmap(addr, VM_MEMORY);
+}
+void test_memory_pressure_in_disk(void) {
+    unsigned char *addr = mmap(NULL, VM_MEMORY, PROT_READ | PROT_WRITE,
+                      MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP, -1, 0);
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED)
+        return;
+    for (int it = 0; it < 2; it++) {
+        for (int i = 0; i < VM_MEMORY; i+=PAGE_SIZE) {
+            if (it == 0) {
+                addr[i] = i%256;
+                ASSERT_EQ_AT(addr + i, i%256);
+                ASSERT_EQ(count_rmap_vmas(addr + i), 1);
+            }
+            addr[i]++;
+            ASSERT_EQ_AT(addr + i, i%256 + (it + 1));
+            ASSERT_EQ(count_rmap_vmas(addr + i), 1);
+        }
+    }
+    struct swap_file_info swap_file_info = get_swap_file_info(addr);
+    int fd = open(swap_file_info.path, O_RDONLY | O_DIRECT);
+    unsigned char *disk_page = NULL;
+    ASSERT_NEQ(fd, -1);
+    ASSERT_EQ(posix_memalign((void **)&disk_page, PAGE_SIZE, PAGE_SIZE), 0);
+    ASSERT(disk_page != NULL);
+    if (fd >= 0)
+        ASSERT_EQ(syncfs(fd), 0);
+    for (int i = 0; i < VM_MEMORY; i+=PAGE_SIZE) {
+        unsigned char expected = (unsigned char)(i%256 + 2);
+
+        ASSERT_EQ(pread(fd, disk_page, PAGE_SIZE, i), PAGE_SIZE);
+        ASSERT_EQ_AT(disk_page, expected);
+    }
+    if (fd >= 0)
+        close(fd);
+    free(disk_page);
+
+    munmap(addr, VM_MEMORY);
 }
 
 void test_swapout_folio(void) {
@@ -60,15 +141,37 @@ void test_swapout_folio(void) {
     for (int i = 0; i < PAGE_SIZE * 2; i+=PAGE_SIZE) {
         addr[i] = i%256;
         ASSERT_EQ_AT(addr + i, i%256);
-        ASSERT_EQ(get_folio_mapcount(addr + i), 1);
+        ASSERT_EQ(count_rmap_vmas(addr + i), 1);
         madvise(addr, PAGE_SIZE * 2, MADV_PAGEOUT);
         unsigned long pte_value = get_pte_value(addr + i);
         printf("pte_value: %lx\n", pte_value);
-        ASSERT_EQ(get_folio_mapcount(addr + i), 1);
+        ASSERT_EQ(get_named_swap_alias_count(addr + i), 1);
         addr[i]++;
         ASSERT_EQ_AT(addr + i, i%256 + 1);
-        ASSERT_EQ(get_folio_mapcount(addr + i), 1);
+        ASSERT_EQ(count_rmap_vmas(addr + i), 1);
+        ASSERT_EQ(get_named_swap_alias_count(addr + i), 1);
     }
+
+    munmap(addr, PAGE_SIZE * 2);
+}
+
+void test_named_swap_alias_count_pageout(void) {
+    unsigned char *addr = mmap(NULL, PAGE_SIZE * 2, PROT_READ | PROT_WRITE,
+                      MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP, -1, 0);
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED)
+        return;
+
+    addr[0] = 7;
+    ASSERT_EQ(count_rmap_vmas(addr), 1);
+    ASSERT_EQ(get_named_swap_alias_count(addr), 1);
+    ASSERT_EQ(madvise(addr, PAGE_SIZE, MADV_PAGEOUT), 0);
+    ASSERT_EQ(get_named_swap_alias_count(addr), 1);
+
+    addr[0]++;
+    ASSERT_EQ_AT(addr, 8);
+    ASSERT_EQ(count_rmap_vmas(addr), 1);
+    ASSERT_EQ(get_named_swap_alias_count(addr), 1);
 
     munmap(addr, PAGE_SIZE * 2);
 }
@@ -99,12 +202,14 @@ void test_zero_file(void) {
     for (int i = 0; i < PAGE_SIZE*MIN_PAGE_NAMED_SWAP_MMAP; i++) {
         ASSERT_EQ_AT(addr + i, 0);
         if (i % PAGE_SIZE == 0) {
-            ASSERT_EQ_ANON_VMA(ANON_VMA_VMA, addr + i,
-                               ANON_VMA_FOLIO, addr + i);
+            struct anon_vma_info_args vma_info =
+                get_anon_vma_info_from_vma(addr + i);
+
+            ASSERT(vma_info.anon_vma != NULL);
+            ASSERT(vma_info.named_swap_file != NULL);
+            ASSERT_EQ(get_folio_mapcount(addr + i), 0);
         }
     }
-    struct swap_file_info swap_file_info = get_swap_file_info(addr);
-    ASSERT_NEQ(swap_file_info.path, NULL);
     munmap(addr, PAGE_SIZE * MIN_PAGE_NAMED_SWAP_MMAP);
 }
 
@@ -117,8 +222,12 @@ void test_read_first_fault(void) {
     for (int i = 0; i < PAGE_SIZE*MIN_PAGE_NAMED_SWAP_MMAP; i++) {
         ASSERT_EQ_AT(addr + i, 0);
         if (i % PAGE_SIZE == 0) {
-            ASSERT_EQ_ANON_VMA(ANON_VMA_VMA, addr + i,
-                               ANON_VMA_FOLIO, addr + i);
+            struct anon_vma_info_args vma_info =
+                get_anon_vma_info_from_vma(addr + i);
+
+            ASSERT(vma_info.anon_vma != NULL);
+            ASSERT(vma_info.named_swap_file != NULL);
+            ASSERT_EQ(get_folio_mapcount(addr + i), 0);
         }
         addr[i] = i%256;
         ASSERT_EQ_AT(addr + i, i%256);
@@ -130,6 +239,101 @@ void test_read_first_fault(void) {
     struct swap_file_info swap_file_info = get_swap_file_info(addr);
     ASSERT_NEQ(swap_file_info.path, NULL);
     munmap(addr, PAGE_SIZE * MIN_PAGE_NAMED_SWAP_MMAP);
+}
+
+void test_read_fork_write_fault(void) {
+    int child_ready[2] = {-1, -1};
+    int parent_done[2] = {-1, -1};
+    pid_t pid;
+    int status = 0;
+    unsigned long child_index = 0;
+    unsigned long parent_index = 0;
+    unsigned char *addr = mmap(NULL, PAGE_SIZE * 2, PROT_READ | PROT_WRITE,
+                      MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP, -1, 0);
+
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED)
+        return;
+
+    ASSERT_EQ_AT(addr, 0);
+    ASSERT_EQ_AT(addr + PAGE_SIZE, 0);
+    ASSERT_EQ(get_folio_mapcount(addr), 0);
+    ASSERT_EQ(get_folio_mapcount(addr + PAGE_SIZE), 0);
+
+    ASSERT_EQ(pipe(child_ready), 0);
+    ASSERT_EQ(pipe(parent_done), 0);
+    if (child_ready[0] < 0 || child_ready[1] < 0 ||
+        parent_done[0] < 0 || parent_done[1] < 0) {
+        munmap(addr, PAGE_SIZE * 2);
+        return;
+    }
+
+    pid = fork();
+    ASSERT_NEQ(pid, -1);
+    if (pid < 0) {
+        close(child_ready[0]);
+        close(child_ready[1]);
+        close(parent_done[0]);
+        close(parent_done[1]);
+        munmap(addr, PAGE_SIZE * 2);
+        return;
+    }
+
+    if (pid == 0) {
+        close(child_ready[0]);
+        close(parent_done[1]);
+
+        ASSERT_EQ_AT(addr, 0);
+        ASSERT_EQ_AT(addr + PAGE_SIZE, 0);
+        ASSERT_EQ(get_folio_mapcount(addr), 0);
+
+        addr[0] = 0x5a;
+        ASSERT_EQ_AT(addr, 0x5a);
+        ASSERT_EQ(get_folio_mapcount(addr), 1);
+        ASSERT_EQ_ANON_VMA(ANON_VMA_VMA, addr, ANON_VMA_FOLIO, addr);
+        child_index = assert_named_swap_file_for_addr(addr);
+
+        if (!current_test_failed)
+            ASSERT_EQ(write(child_ready[1], &child_index,
+                            sizeof(child_index)),
+                      (ssize_t)sizeof(child_index));
+        close(child_ready[1]);
+
+        ASSERT_EQ(wait_fd(parent_done[0]), 0);
+        close(parent_done[0]);
+        ASSERT_EQ_AT(addr, 0x5a);
+        ASSERT_EQ_AT(addr + PAGE_SIZE, 0);
+        _exit(current_test_failed ? EXIT_FAILURE : EXIT_SUCCESS);
+    }
+
+    close(child_ready[1]);
+    close(parent_done[0]);
+
+    ASSERT_EQ(read(child_ready[0], &child_index, sizeof(child_index)),
+              (ssize_t)sizeof(child_index));
+    close(child_ready[0]);
+
+    ASSERT_EQ_AT(addr, 0);
+    ASSERT_EQ_AT(addr + PAGE_SIZE, 0);
+    ASSERT_EQ(get_folio_mapcount(addr + PAGE_SIZE), 0);
+
+    addr[PAGE_SIZE] = 0xa5;
+    ASSERT_EQ_AT(addr + PAGE_SIZE, 0xa5);
+    ASSERT_EQ(get_folio_mapcount(addr + PAGE_SIZE), 1);
+    ASSERT_EQ_ANON_VMA(ANON_VMA_VMA, addr + PAGE_SIZE,
+                       ANON_VMA_FOLIO, addr + PAGE_SIZE);
+    parent_index = assert_named_swap_file_for_addr(addr + PAGE_SIZE);
+    ASSERT_NEQ(parent_index, child_index);
+
+    ASSERT_EQ(signal_fd(parent_done[1]), 0);
+    close(parent_done[1]);
+
+    ASSERT_EQ(waitpid(pid, &status, 0), pid);
+    ASSERT(WIFEXITED(status));
+    if (WIFEXITED(status))
+        ASSERT_EQ(WEXITSTATUS(status), EXIT_SUCCESS);
+
+    munmap(addr, PAGE_SIZE * 2);
 }
 
 void test_swap_file_delete_exit(void) {
@@ -233,6 +437,7 @@ void test_single_anon_vma(void) {
         ASSERT_EQ(anon_vma_info.num_children, 1);
         ASSERT_EQ(anon_vma_info.num_active_vmas, 1);
     }
+    munmap(addr, PAGE_SIZE * 10);
 }
 
 void test_fork_anon_vma(void) {
@@ -253,8 +458,10 @@ void test_fork_anon_vma(void) {
     ASSERT_EQ(pipe(child_ready), 0);
     ASSERT_EQ(pipe(parent_done), 0);
     if (child_ready[0] < 0 || child_ready[1] < 0 ||
-        parent_done[0] < 0 || parent_done[1] < 0)
+        parent_done[0] < 0 || parent_done[1] < 0) {
+        munmap(addr, PAGE_SIZE * 4);
         return;
+    }
 
     pid = fork();
     ASSERT_NEQ(pid, -1);
@@ -263,6 +470,7 @@ void test_fork_anon_vma(void) {
         close(child_ready[1]);
         close(parent_done[0]);
         close(parent_done[1]);
+        munmap(addr, PAGE_SIZE * 4);
         return;
     }
 
@@ -316,6 +524,7 @@ void test_fork_anon_vma(void) {
         ASSERT(WIFEXITED(status));
         if (WIFEXITED(status))
             ASSERT_EQ(WEXITSTATUS(status), EXIT_SUCCESS);
+        munmap(addr, PAGE_SIZE * 4);
     }
     else {
         close(child_ready[0]);
@@ -386,8 +595,10 @@ void test_count_rmap_vmas(void) {
     ASSERT_EQ(pipe(child_ready), 0);
     ASSERT_EQ(pipe(parent_done), 0);
     if (child_ready[0] < 0 || child_ready[1] < 0 ||
-        parent_done[0] < 0 || parent_done[1] < 0)
+        parent_done[0] < 0 || parent_done[1] < 0) {
+        munmap(addr, PAGE_SIZE * 4);
         return;
+    }
 
     pid = fork();
     ASSERT_NEQ(pid, -1);
@@ -396,6 +607,7 @@ void test_count_rmap_vmas(void) {
         close(child_ready[1]);
         close(parent_done[0]);
         close(parent_done[1]);
+        munmap(addr, PAGE_SIZE * 4);
         return;
     }
 
@@ -420,6 +632,7 @@ void test_count_rmap_vmas(void) {
         ASSERT(WIFEXITED(status));
         if (WIFEXITED(status))
             ASSERT_EQ(WEXITSTATUS(status), EXIT_SUCCESS);
+        munmap(addr, PAGE_SIZE * 4);
     }
     else {
         close(child_ready[0]);
@@ -609,34 +822,3 @@ void test_mulcount_rmap_vmas_multi_fork(void) {
     }
 
 }
-static void print_usage(char *argv0) {
-    printf("Usage: %s [--trace]\n", argv0);
-}
-
-#ifndef COMPILE_TESTS_ONLY
-int main(int argc, char *argv[]) {
-    int enable_traces = 0;
-    struct option long_options[] = {
-        {"trace", no_argument, NULL, 't'},
-        {"help", no_argument, NULL, 'h'},
-        {0, 0, 0, 0},
-    };
-
-    int opt;
-    while ((opt = getopt_long(argc, argv, "th", long_options, NULL)) != -1) {
-        switch (opt) {
-        case 't':
-            enable_traces = 1;
-            break;
-        case 'h':
-            print_usage(argv[0]);
-            return EXIT_SUCCESS;
-        default:
-            print_usage(argv[0]);
-            return EXIT_FAILURE;
-        }
-    }
-
-    return run_all_tests(enable_traces);
-}
-#endif

@@ -73,9 +73,14 @@ struct swap_file_info {
 #define IOCTL_ANON_VMA_INFO_FROM_VMA _IOR('s', 0x08, struct anon_vma_info_args)
 #define IOCTL_GET_PT_PAGE_FROM_ADDRESS _IOWR('s', 0x09, unsigned long)
 #define IOCTL_FOLIO_GET_MAPCOUNT _IOWR('s', 0x10, struct folio_get_mapcount_args)
+#define IOCTL_NAMED_SWAP_ALIAS_COUNT _IOWR('s', 0x11, struct named_swap_alias_count_args)
 struct folio_get_mapcount_args {
     void *virtual_address;
     unsigned long mapcount;
+};
+struct named_swap_alias_count_args {
+    void *virtual_address;
+    unsigned int count;
 };
 
 struct vma_info_args get_vma_info(void *addr);
@@ -87,6 +92,7 @@ struct folio_info_args get_folio_info(void *addr);
 unsigned short get_current_cgroup(void);
 unsigned long get_pte_value(void *addr);
 unsigned long get_folio_mapcount(void *addr);
+unsigned int get_named_swap_alias_count(void *addr);
 int parse_named_swap_index(const char *path, unsigned long *index);
 void named_swap_path_for_index(char *path, size_t size, unsigned long index);
 int signal_fd(int fd);
