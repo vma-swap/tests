@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "test_framework.h"
 #include "test_util.h"
 
@@ -398,8 +399,23 @@ void test_mremap_enlarge(void){
     size_t initial_size = PAGE_SIZE * 4;
     size_t expanded_size = PAGE_SIZE * 8;
 
+
+    void *reserved = mmap(NULL, expanded_size, PROT_NONE,
+                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    ASSERT(reserved != MAP_FAILED);
+    if (reserved == MAP_FAILED)
+        return;
+
+    /*
+     * Free the whole region, leaving a hole of expanded_size.
+     */
+    int rc = munmap(reserved, expanded_size);
+    ASSERT(rc == 0);
+    if (rc != 0)
+        return;
     // 1. Initial memory mapping with MAP_NAMED_SWAP
-    unsigned char *addr = mmap(NULL, initial_size, PROT_READ | PROT_WRITE,
+   
+    unsigned char *addr = mmap(reserved, initial_size, PROT_READ | PROT_WRITE,
                                MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP, -1, 0);
     ASSERT(addr != MAP_FAILED);
     if (addr == MAP_FAILED) return;
@@ -418,24 +434,28 @@ void test_mremap_enlarge(void){
     ASSERT_EQ(initial_info.file_size, initial_size);
 
     // 4. Expand the mapping using mremap
-    unsigned char *new_addr = mremap(addr, initial_size, expanded_size, 0); 
+    unsigned char *new_addr = mremap(addr, initial_size, expanded_size, 0);// MREMAP_MAYMOVE 
 
-
+    ASSERT_EQ(new_addr, addr); // The address may change due to mremap
     if (new_addr == MAP_FAILED) {
     perror("mremap");
     printf("errno=%d\n", errno);
 }
-    ASSERT(new_addr != MAP_FAILED);
+    ASSERT_NEQ(new_addr, MAP_FAILED);
     if (new_addr == MAP_FAILED) return;
 
     // 5. Fault in the newly expanded pages and verify anon_vma links
-    for (int i = initial_size; i < expanded_size; i += PAGE_SIZE) {
-        new_addr[i] = i/PAGE_SIZE; // Trigger write fault on new pages
-
+    for (int i = 0; i < expanded_size; i += PAGE_SIZE) {
+        if (i < initial_size){
+            ASSERT_AT(new_addr + i, i); // Verify existing pages
+        }
+        else {
+            new_addr[i] = i/PAGE_SIZE; // Trigger write fault on new pages
         
-        // The newly allocated folios should share the same anon_vma
-        ASSERT_EQ_ANON_VMA(ANON_VMA_VMA, new_addr + i,
-                           ANON_VMA_FOLIO, new_addr + i);
+            // The newly allocated folios should share the same anon_vma
+            ASSERT_EQ_ANON_VMA(ANON_VMA_VMA, new_addr + i,
+                            ANON_VMA_FOLIO, new_addr + i);
+        }
     }
 
    // 6. Verify the backing file was enlarged by the kernel
