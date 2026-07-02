@@ -447,7 +447,7 @@ void test_mremap_enlarge(void){
     // 5. Fault in the newly expanded pages and verify anon_vma links
     for (int i = 0; i < expanded_size; i += PAGE_SIZE) {
         if (i < initial_size){
-            ASSERT_AT(new_addr + i, i); // Verify existing pages
+            ASSERT_EQ_AT(new_addr + i, i); // Verify existing pages
         }
         else {
             new_addr[i] = i/PAGE_SIZE; // Trigger write fault on new pages
