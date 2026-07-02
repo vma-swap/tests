@@ -25,7 +25,7 @@
 //REGISTER_TEST(test_write_fault);
 REGISTER_TEST(test_mremap_enlarge);
 
-loff_t named_swap_file_size(struct file *file){
+loff_t named_swap_file_size(struct file *file);
 
 void test_write_fault(void) {
     unsigned char *addr = mmap(NULL, PAGE_SIZE * MIN_PAGE_NAMED_SWAP_MMAP, PROT_READ | PROT_WRITE,
