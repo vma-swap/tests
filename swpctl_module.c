@@ -346,7 +346,7 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
             if (!vma) {
                 return -EINVAL;
             }
-            args->file_size = named_swap_file_size(vma); //new functino for size. correct usage?
+            args->file_size = named_swap_file_size(named_swap_file); //new function for size. correct usage?
         }
         put_anon_vma(anon_vma);
         put_page(page);
