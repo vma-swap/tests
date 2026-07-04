@@ -417,6 +417,9 @@ void test_mremap_enlarge(void){
    
     unsigned char *addr = mmap(reserved, initial_size, PROT_READ | PROT_WRITE,
                                MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP, -1, 0);
+    
+    printf("test_mremap_enlarge: mmap returned addr=%px\n", addr);
+
     ASSERT(addr != MAP_FAILED);
     if (addr == MAP_FAILED) return;
 
@@ -435,6 +438,8 @@ void test_mremap_enlarge(void){
 
     // 4. Expand the mapping using mremap
     unsigned char *new_addr = mremap(addr, initial_size, expanded_size, 0);// MREMAP_MAYMOVE 
+
+    printf("test_mremap_enlarge: mremap returned new_addr=%px\n", new_addr);
 
     ASSERT_EQ(new_addr, addr); // The address may change due to mremap
     if (new_addr == MAP_FAILED) {
