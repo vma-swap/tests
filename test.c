@@ -470,6 +470,82 @@ void test_mremap_enlarge(void){
     munmap(new_addr, expanded_size); 
 }
 
+
+void test_mremap_failure_shrink(void){ 
+    size_t initial_size = PAGE_SIZE * 4;
+    size_t expanded_size = PAGE_SIZE * 8;
+
+
+    void *reserved = mmap(NULL, expanded_size, PROT_NONE,
+                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    ASSERT(reserved != MAP_FAILED);
+    if (reserved == MAP_FAILED)
+        return;
+
+    /*
+     * Free the whole region, leaving a hole of expanded_size.
+     */
+    int rc = munmap(reserved, expanded_size);
+    ASSERT(rc == 0);
+    if (rc != 0)
+        return;
+    // 1. Initial memory mapping with MAP_NAMED_SWAP
+   
+    unsigned char *addr = mmap(NULL, initial_size, PROT_READ | PROT_WRITE,
+                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP, -1, 0);
+    
+    printf("test_mremap_enlarge: mmap returned addr=%px\n", addr);
+
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED) return;
+
+    // 2. Fault in initial pages and verify anon_vma links
+    for (int i = 0; i < initial_size; i += PAGE_SIZE) {
+        addr[i] = i / PAGE_SIZE; // Trigger write fault
+        
+        // Check that the folio's anon_vma matches the VMA's anon_vma
+        ASSERT_EQ_ANON_VMA(ANON_VMA_VMA, addr + i,
+                           ANON_VMA_FOLIO, addr + i);
+    }
+
+    // 3. Verify the initial backing file size
+    struct swap_file_info initial_info = get_swap_file_info(addr);
+    ASSERT_EQ(initial_info.file_size, initial_size);
+
+    // 4. Expand the mapping using mremap
+    unsigned char *new_addr = mremap(addr, initial_size, expanded_size, 0);// MREMAP_MAYMOVE 
+
+    printf("test_mremap_enlarge: mremap returned new_addr=%px\n", new_addr);
+
+    ASSERT_EQ(new_addr, addr); // The address may change due to mremap
+    if (new_addr == MAP_FAILED) {
+    perror("mremap");
+    printf("errno=%d\n", errno);
+}
+    ASSERT_NEQ(new_addr, MAP_FAILED);
+    if (new_addr == MAP_FAILED) return;
+
+    // 5. Fault in the newly expanded pages and verify anon_vma links
+    for (int i = 0; i < expanded_size; i += PAGE_SIZE) {
+        if (i < initial_size){
+            ASSERT_EQ_AT(new_addr + i, i / PAGE_SIZE); // Verify existing pages
+        }
+        else {
+            new_addr[i] = i / PAGE_SIZE; // Trigger write fault on new pages
+        
+            // The newly allocated folios should share the same anon_vma
+            ASSERT_EQ_ANON_VMA(ANON_VMA_VMA, new_addr + i,
+                            ANON_VMA_FOLIO, new_addr + i);
+        }
+    }
+
+   // 6. Verify the backing file was enlarged by the kernel
+    struct swap_file_info expanded_info = get_swap_file_info(new_addr);
+    ASSERT_EQ(expanded_info.file_size, expanded_size);
+
+    munmap(new_addr, expanded_size); 
+}
+
 static void print_usage(char *argv0) {
     printf("Usage: %s [--trace]\n", argv0);
 }
