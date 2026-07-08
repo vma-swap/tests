@@ -23,7 +23,8 @@
 //REGISTER_TEST(test_zero_file);
 //REGISTER_TEST(test_read_first_fault);
 //REGISTER_TEST(test_write_fault);
-REGISTER_TEST(test_mremap_enlarge);
+//REGISTER_TEST(test_mremap_enlarge);
+REGISTER_TEST(test_mremap_failure_shrink);
 
 loff_t named_swap_file_size(struct file *file);
 
