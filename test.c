@@ -9,6 +9,8 @@
 #include <sys/mman.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <string.h>
 
 #define PAGE_SIZE 4096
 #define MAP_NAMED_SWAP 0x200000
@@ -472,35 +474,37 @@ void test_mremap_enlarge(void){
 }
 
 
-void test_mremap_failure_shrink(void){ 
+/* Helper to write to debugfs/proc files */
+static void write_sys_file(const char *path, const char *val) {
+    int fd = open(path, O_WRONLY);
+    if (fd >= 0) {
+        write(fd, val, strlen(val));
+        close(fd);
+    } else {
+        fprintf(stderr, "Failed to open %s\n", path);
+    }
+}
+
+void test_mremap_failure_shrink(void) {
     size_t initial_size = PAGE_SIZE * 4;
     size_t expanded_size = PAGE_SIZE * 8;
 
-
+    /* 1. Setup the reserved region and initial mapping */
     void *reserved = mmap(NULL, expanded_size, PROT_NONE,
                           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     ASSERT(reserved != MAP_FAILED);
-    if (reserved == MAP_FAILED)
-        return;
-
-    /*
-     * Free the whole region, leaving a hole of expanded_size.
-     */
     int rc = munmap(reserved, expanded_size);
     ASSERT(rc == 0);
-    if (rc != 0)
-        return;
-    // 1. Initial memory mapping with MAP_NAMED_SWAP
-   
-    unsigned char *addr = mmap(NULL, initial_size, PROT_READ | PROT_WRITE,
+
+    unsigned char *addr = mmap(reserved, initial_size, PROT_READ | PROT_WRITE,
                                MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP, -1, 0);
     
-    printf("test_mremap_enlarge: mmap returned addr=%px\n", addr);
+    printf("test_mremap_failure_shrink: mmap returned addr=%px\n", addr);
 
     ASSERT(addr != MAP_FAILED);
     if (addr == MAP_FAILED) return;
 
-    // 2. Fault in initial pages and verify anon_vma links
+    /* 2. Fault in initial pages and verify anon_vma links */
     for (int i = 0; i < initial_size; i += PAGE_SIZE) {
         addr[i] = i / PAGE_SIZE; // Trigger write fault
         
@@ -509,42 +513,38 @@ void test_mremap_failure_shrink(void){
                            ANON_VMA_FOLIO, addr + i);
     }
 
-    // 3. Verify the initial backing file size
+    /* 3. Verify the initial backing file size */
     struct swap_file_info initial_info = get_swap_file_info(addr);
     ASSERT_EQ(initial_info.file_size, initial_size);
 
-    // 4. Expand the mapping using mremap
-    unsigned char *new_addr = mremap(addr, initial_size, expanded_size, 0);// MREMAP_MAYMOVE 
+    /* 4. ENABLE FUNCTION ERROR INJECTION */
+    // Tell the kernel to intercept vma_merge_extend
+    write_sys_file("/sys/kernel/debug/fail_function/inject", "vma_merge_extend");
+    // Force the return value to be 0 (NULL)
+    write_sys_file("/sys/kernel/debug/fail_function/vma_merge_extend/retval", "0");
 
-    printf("test_mremap_enlarge: mremap returned new_addr=%px\n", new_addr);
+    /* 5. Attempt the expansion */
+    // named_swap_enlarge will succeed, but vma_merge_extend will instantly return NULL
+    unsigned char *new_addr = mremap(addr, initial_size, expanded_size, 0);
 
-    ASSERT_EQ(new_addr, addr); // The address may change due to mremap
+    /* 6. DISABLE FUNCTION ERROR INJECTION */
+    // Clear the injection so it doesn't affect subsequent tests or system stability
+    write_sys_file("/sys/kernel/debug/fail_function/inject", "");
+
+    /* 7. Verify mremap gracefully failed */
+    ASSERT_EQ(new_addr, MAP_FAILED);
+    
     if (new_addr == MAP_FAILED) {
-    perror("mremap");
-    printf("errno=%d\n", errno);
-}
-    ASSERT_NEQ(new_addr, MAP_FAILED);
-    if (new_addr == MAP_FAILED) return;
-
-    // 5. Fault in the newly expanded pages and verify anon_vma links
-    for (int i = 0; i < expanded_size; i += PAGE_SIZE) {
-        if (i < initial_size){
-            ASSERT_EQ_AT(new_addr + i, i / PAGE_SIZE); // Verify existing pages
-        }
-        else {
-            new_addr[i] = i / PAGE_SIZE; // Trigger write fault on new pages
-        
-            // The newly allocated folios should share the same anon_vma
-            ASSERT_EQ_ANON_VMA(ANON_VMA_VMA, new_addr + i,
-                            ANON_VMA_FOLIO, new_addr + i);
-        }
+        /* 8. Verify the backing file was successfully shrunk back to its initial size */
+        struct swap_file_info shrunk_info = get_swap_file_info(addr);
+        ASSERT_EQ(shrunk_info.file_size, initial_size);
+    } else {
+        // Cleanup if the test fails and actually expands the memory
+        munmap(new_addr, expanded_size);
+        fprintf(stderr, "Test invalid: mremap succeeded, kernel fault injection missed.\n");
     }
 
-   // 6. Verify the backing file was enlarged by the kernel
-    struct swap_file_info expanded_info = get_swap_file_info(new_addr);
-    ASSERT_EQ(expanded_info.file_size, expanded_size);
-
-    munmap(new_addr, expanded_size); 
+    munmap(addr, initial_size);
 }
 
 static void print_usage(char *argv0) {
