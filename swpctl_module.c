@@ -31,6 +31,7 @@ struct swap_file_info {
     unsigned long offset;
     unsigned long size;
     unsigned long file_size;   // NEW: Entire backing file size
+    unsigned long allocated_blocks; /* NEW: Extracted from i_blocks */
 };
 struct vma_info_args {
     void *virtual_address;
@@ -347,6 +348,9 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
                 return -EINVAL;
             }
             args->file_size = named_swap_file_size(named_swap_file); //new function for size. correct usage?
+
+            /* NEW: Fetch the actual physical blocks allocated on disk */
+            args->allocated_blocks = named_swap_file_blocks(named_swap_file);
         }
         put_anon_vma(anon_vma);
         put_page(page);

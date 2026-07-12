@@ -26,9 +26,12 @@
 //REGISTER_TEST(test_read_first_fault);
 //REGISTER_TEST(test_write_fault);
 //REGISTER_TEST(test_mremap_enlarge);
-REGISTER_TEST(test_mremap_failure_shrink);
+//REGISTER_TEST(test_mremap_failure_shrink);
+REGISTER_TEST(test_munmap_named_swap_deallocate);
+//REGISTER_TEST(test_mprotect_split_middle);
 
 loff_t named_swap_file_size(struct file *file);
+loff_t named_swap_file_blocks(struct file *file);
 
 void test_write_fault(void) {
     unsigned char *addr = mmap(NULL, PAGE_SIZE * MIN_PAGE_NAMED_SWAP_MMAP, PROT_READ | PROT_WRITE,
@@ -523,6 +526,13 @@ void test_mremap_failure_shrink(void) {
     // Force the return value to be 0 (NULL)
     write_sys_file("/sys/kernel/debug/fail_function/vma_merge_extend/retval", "0");
 
+    // Make the injection deterministic for this test run
+    write_sys_file("/sys/kernel/debug/fail_function/probability", "100\n");
+    write_sys_file("/sys/kernel/debug/fail_function/times", "1\n");
+    write_sys_file("/sys/kernel/debug/fail_function/interval", "0\n");
+    write_sys_file("/sys/kernel/debug/fail_function/space", "0\n");
+    write_sys_file("/sys/kernel/debug/fail_function/verbose", "1\n");
+
     /* 5. Attempt the expansion */
     // named_swap_enlarge will succeed, but vma_merge_extend will instantly return NULL
     unsigned char *new_addr = mremap(addr, initial_size, expanded_size, 0);
@@ -546,6 +556,109 @@ void test_mremap_failure_shrink(void) {
 
     munmap(addr, initial_size);
 }
+
+void test_munmap_named_swap_deallocate(void){
+    size_t len = PAGE_SIZE * 3;
+    unsigned char *addr = mmap(NULL, len, PROT_READ | PROT_WRITE,
+                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP, -1, 0);
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED) return;
+
+    /* 1. Fault in all pages to allocate backing blocks */
+    addr[0] = 0x11;
+    addr[PAGE_SIZE] = 0x22;
+    addr[PAGE_SIZE * 2] = 0x33;
+
+    /* 2. Retrieve initial file state */
+    struct swap_file_info before = get_swap_file_info(addr);
+    ASSERT_NEQ(before.path, NULL);
+    ASSERT_EQ(before.file_size, len); /* Apparent size should be 3 pages */
+
+    /* The filesystem allocates i_blocks in 512-byte units. */
+    /* 3 pages * 4096 bytes = 12288 bytes. 12288 / 512 = 24 blocks. */
+    unsigned long initial_blocks = before.allocated_blocks;
+    ASSERT_ABOVE(initial_blocks, 0); 
+
+    /* 3. Unmap the middle page to trigger named_swap_deallocate */
+    ASSERT_EQ(munmap(addr + PAGE_SIZE, PAGE_SIZE), 0);
+
+    /* 4. Verify the left and right pages are still intact */
+    ASSERT_EQ_AT(addr, 0x11);
+    ASSERT_EQ_AT(addr + PAGE_SIZE * 2, 0x33);
+
+    /* 5. Verify accessing the unmapped middle page causes a segfault */
+    ASSERT_SIGNAL(SIGSEGV) {
+        addr[PAGE_SIZE] = 0x44;
+    }
+
+    /* 6. Verify the apparent backing file size remains unchanged due to KEEP_SIZE */
+    struct swap_file_info after = get_swap_file_info(addr);
+    ASSERT_EQ(after.file_size, len);
+
+    /* 
+     * 7. Verify the physical blocks decreased by exactly the unmapped size.
+     * i_blocks are measured in 512-byte sectors.
+     * We unmapped exactly 1 PAGE_SIZE (4096 bytes).
+     * 4096 / 512 = 8 blocks should have been freed.
+     */
+    unsigned long after_blocks = after.allocated_blocks;
+    unsigned long blocks_freed = PAGE_SIZE / 512;
+    
+    ASSERT_EQ(initial_blocks, after_blocks + blocks_freed);
+
+    /* Cleanup the remaining left and right VMAs */
+    munmap(addr, PAGE_SIZE);
+    munmap(addr + PAGE_SIZE * 2, PAGE_SIZE);
+}
+
+
+
+/*
+void test_mprotect_split_middle(void) {
+    size_t len = PAGE_SIZE * 3;
+    unsigned char *addr = mmap(NULL, len, PROT_READ | PROT_WRITE,
+                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP,
+                               -1, 0);
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED)
+        return;
+
+    addr[0] = 0x11;
+    addr[PAGE_SIZE] = 0x22;
+    addr[PAGE_SIZE * 2] = 0x33;
+
+    struct swap_file_info before = get_swap_file_info(addr);
+    ASSERT_NEQ(before.path, NULL);
+    ASSERT_EQ(before.file_size, len);
+
+    ASSERT_EQ(mprotect(addr + PAGE_SIZE, PAGE_SIZE, PROT_READ), 0);
+
+    ASSERT_EQ_AT(addr + 0, 0x11);
+    ASSERT_EQ_AT(addr + PAGE_SIZE, 0x22);
+    ASSERT_EQ_AT(addr + PAGE_SIZE * 2, 0x33);
+
+    ASSERT_EQ(count_rmap_vmas(addr), count_rmap_vmas(addr + PAGE_SIZE * 2));
+
+    struct vma_info_args left_vma = get_vma_info(addr);
+    struct vma_info_args mid_vma = get_vma_info(addr + PAGE_SIZE);
+    struct vma_info_args right_vma = get_vma_info(addr + PAGE_SIZE * 2);
+
+    ASSERT(left_vma.vma_ptr != NULL);
+    ASSERT(mid_vma.vma_ptr != NULL);
+    ASSERT(right_vma.vma_ptr != NULL);
+    ASSERT_NEQ(left_vma.vma_ptr, mid_vma.vma_ptr);
+    ASSERT_NEQ(mid_vma.vma_ptr, right_vma.vma_ptr);
+
+    ASSERT_SIGNAL(SIGSEGV) {
+        addr[PAGE_SIZE] = 0x44;
+    }
+
+    struct swap_file_info after = get_swap_file_info(addr);
+    ASSERT_EQ(after.file_size, len);
+
+    munmap(addr, len);
+}
+*/
 
 static void print_usage(char *argv0) {
     printf("Usage: %s [--trace]\n", argv0);

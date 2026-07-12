@@ -63,6 +63,7 @@ struct swap_file_info {
     unsigned long offset;
     unsigned long size;
     unsigned long file_size;   // NEW: Entire backing file size
+    unsigned long allocated_blocks; /* NEW: Extracted from i_blocks */
 };
 
 #define IOCTL_VMA_INFO _IOR('s', 0x02, struct vma_info_args)
