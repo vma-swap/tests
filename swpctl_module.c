@@ -24,6 +24,7 @@
 #define IOCTL_COUNT_RMAP_VMAS _IOWR('s', 0x06, struct rmap_walk_args)
 #define IOCTL_GET_SWAP_FILE_PATH _IOWR('s', 0x07, struct swap_file_info)
 #define IOCTL_ANON_VMA_INFO_FROM_VMA _IOR('s', 0x08, struct anon_vma_info_args)
+#define IOCTL_GET_PAGE_PROT _IOR('s', 0x09, struct page_prot_args)
 
 struct swap_file_info {
     void *virtual_address;
@@ -32,6 +33,12 @@ struct swap_file_info {
     unsigned long size;
     unsigned long file_size;   // NEW: Entire backing file size
     unsigned long allocated_blocks; /* NEW: Extracted from i_blocks */
+};
+struct page_prot_args {
+    void *virtual_address;
+    unsigned int is_readable;
+    unsigned int is_writable;
+    unsigned int is_executable;
 };
 struct vma_info_args {
     void *virtual_address;
@@ -272,7 +279,7 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
             return -EFAULT;
         return 0;
     }
-    case IOCTL_GET_SWAP_FILE_PATH: {
+case IOCTL_GET_SWAP_FILE_PATH: {
         struct swap_file_info *args;
         char *path_buf;
         char *path;
@@ -392,6 +399,34 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
         kfree(args);
         return 0;
     }
+
+    case IOCTL_GET_PAGE_PROT: {
+        struct page_prot_args args;
+        struct vm_area_struct *vma;
+
+        if (copy_from_user(&args, (void __user *)arg, sizeof(args)))
+            return -EFAULT;
+
+        mmap_read_lock(current->mm);
+        vma = vma_lookup(current->mm, (unsigned long)args.virtual_address);
+        if (!vma) {
+            mmap_read_unlock(current->mm);
+            return -EINVAL;
+        }
+
+        /* Extract the actual kernel permissions */
+        args.is_readable = !!(vma->vm_flags & VM_READ);
+        args.is_writable = !!(vma->vm_flags & VM_WRITE);
+        args.is_executable = !!(vma->vm_flags & VM_EXEC);
+        
+        mmap_read_unlock(current->mm);
+
+        if (copy_to_user((void __user *)arg, &args, sizeof(args)))
+            return -EFAULT;
+
+        return 0;
+    }
+
     default:
         return -EINVAL;
     }

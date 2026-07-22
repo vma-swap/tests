@@ -99,6 +99,21 @@ struct swap_file_info get_swap_file_info(void *addr) {
     return args;
 }
 
+struct page_prot_args get_page_prot(void *addr) {
+    struct page_prot_args args = {0};
+    args.virtual_address = addr;
+
+    int fd = open_swapctl(); 
+    if (fd < 0)
+        return args;
+
+    if (ioctl(fd, IOCTL_GET_PAGE_PROT, &args) < 0)
+        perror("Failed to get page protections");
+        
+    close(fd);
+    return args;
+}
+
 
 int parse_named_swap_index(const char *path, unsigned long *index) {
     const char *digits;

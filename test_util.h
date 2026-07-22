@@ -66,6 +66,13 @@ struct swap_file_info {
     unsigned long allocated_blocks; /* NEW: Extracted from i_blocks */
 };
 
+struct page_prot_args {
+    void *virtual_address;
+    unsigned int is_readable;
+    unsigned int is_writable;
+    unsigned int is_executable;
+};
+
 #define IOCTL_VMA_INFO _IOR('s', 0x02, struct vma_info_args)
 #define IOCTL_ANON_VMA_INFO _IOR('s', 0x05, struct anon_vma_info_args)
 #define IOCTL_COUNT_RMAP_VMAS _IOWR('s', 0x06, struct rmap_walk_args)
@@ -73,12 +80,14 @@ struct swap_file_info {
 #define IOCTL_FOLIO_LRU_INFO _IOR('s', 0x03, struct folio_info_args)
 #define IOCTL_GET_CURRENT_CGROUP _IOR('s', 0x04, unsigned short)
 #define IOCTL_ANON_VMA_INFO_FROM_VMA _IOR('s', 0x08, struct anon_vma_info_args)
+#define IOCTL_GET_PAGE_PROT _IOR('s', 0x09, struct page_prot_args)
 
 struct vma_info_args get_vma_info(void *addr);
 struct anon_vma_info_args get_anon_vma_info(void *addr);
 struct anon_vma_info_args get_anon_vma_info_from_vma(void *addr);
 unsigned int count_rmap_vmas(void *addr);
 struct swap_file_info get_swap_file_info(void *addr);
+struct page_prot_args get_page_prot(void *addr);
 struct folio_info_args get_folio_info(void *addr);
 unsigned short get_current_cgroup(void);
 int parse_named_swap_index(const char *path, unsigned long *index);

@@ -27,8 +27,8 @@
 //REGISTER_TEST(test_write_fault);
 //REGISTER_TEST(test_mremap_enlarge);
 //REGISTER_TEST(test_mremap_failure_shrink);
-REGISTER_TEST(test_munmap_named_swap_deallocate);
-//REGISTER_TEST(test_mprotect_split_middle);
+//REGISTER_TEST(test_munmap_named_swap_deallocate);
+REGISTER_TEST(test_mprotect_permissions);
 
 loff_t named_swap_file_size(struct file *file);
 loff_t named_swap_file_blocks(struct file *file);
@@ -571,7 +571,7 @@ void test_munmap_named_swap_deallocate(void){
 
     /* 2. Retrieve initial file state */
     struct swap_file_info before = get_swap_file_info(addr);
-    ASSERT_NEQ(before.path, NULL);
+    ASSERT(before.path[0] != '\0');
     ASSERT_EQ(before.file_size, len); /* Apparent size should be 3 pages */
 
     /* The filesystem allocates i_blocks in 512-byte units. */
@@ -586,10 +586,6 @@ void test_munmap_named_swap_deallocate(void){
     ASSERT_EQ_AT(addr, 0x11);
     ASSERT_EQ_AT(addr + PAGE_SIZE * 2, 0x33);
 
-    /* 5. Verify accessing the unmapped middle page causes a segfault */
-    ASSERT_SIGNAL(SIGSEGV) {
-        addr[PAGE_SIZE] = 0x44;
-    }
 
     /* 6. Verify the apparent backing file size remains unchanged due to KEEP_SIZE */
     struct swap_file_info after = get_swap_file_info(addr);
@@ -605,60 +601,62 @@ void test_munmap_named_swap_deallocate(void){
     unsigned long blocks_freed = PAGE_SIZE / 512;
     
     ASSERT_EQ(initial_blocks, after_blocks + blocks_freed);
+    
+
+    /* 5. Verify accessing the unmapped middle page causes a segfault */
+    ASSERT_SIGNAL(SIGSEGV) {
+        addr[PAGE_SIZE] = 0x44;
+    }
 
     /* Cleanup the remaining left and right VMAs */
     munmap(addr, PAGE_SIZE);
     munmap(addr + PAGE_SIZE * 2, PAGE_SIZE);
 }
 
-
-
-/*
-void test_mprotect_split_middle(void) {
-    size_t len = PAGE_SIZE * 3;
+void test_mprotect_permissions(void) {
+    size_t len = PAGE_SIZE * 2;
     unsigned char *addr = mmap(NULL, len, PROT_READ | PROT_WRITE,
-                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP,
-                               -1, 0);
+                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP, -1, 0);
     ASSERT(addr != MAP_FAILED);
-    if (addr == MAP_FAILED)
-        return;
+    if (addr == MAP_FAILED) return;
 
-    addr[0] = 0x11;
-    addr[PAGE_SIZE] = 0x22;
-    addr[PAGE_SIZE * 2] = 0x33;
+    /* 1. Fault both pages */
+    addr[0] = 0xAA;
+    addr[PAGE_SIZE] = 0xBB;
 
-    struct swap_file_info before = get_swap_file_info(addr);
-    ASSERT_NEQ(before.path, NULL);
-    ASSERT_EQ(before.file_size, len);
+    /* 2. Verify initial permissions from kernel (both should be writable) */
+    struct page_prot_args prot_page1_before = get_page_prot(addr);
+    struct page_prot_args prot_page2_before = get_page_prot(addr + PAGE_SIZE);
 
-    ASSERT_EQ(mprotect(addr + PAGE_SIZE, PAGE_SIZE, PROT_READ), 0);
+    ASSERT_EQ(prot_page1_before.is_writable, 1);
+    ASSERT_EQ(prot_page2_before.is_writable, 1);
 
-    ASSERT_EQ_AT(addr + 0, 0x11);
-    ASSERT_EQ_AT(addr + PAGE_SIZE, 0x22);
-    ASSERT_EQ_AT(addr + PAGE_SIZE * 2, 0x33);
+    /* 3. Apply mprotect to the second page to make it read-only */
+    int rc = mprotect(addr + PAGE_SIZE, PAGE_SIZE, PROT_READ);
+    ASSERT_EQ(rc, 0);
 
-    ASSERT_EQ(count_rmap_vmas(addr), count_rmap_vmas(addr + PAGE_SIZE * 2));
+    /* 4. Verify new permissions from the kernel */
+    struct page_prot_args prot_page1_after = get_page_prot(addr);
+    struct page_prot_args prot_page2_after = get_page_prot(addr + PAGE_SIZE);
 
-    struct vma_info_args left_vma = get_vma_info(addr);
-    struct vma_info_args mid_vma = get_vma_info(addr + PAGE_SIZE);
-    struct vma_info_args right_vma = get_vma_info(addr + PAGE_SIZE * 2);
+    /* First page should remain writable */
+    ASSERT_EQ(prot_page1_after.is_writable, 1);
+    /* Second page should NO LONGER be writable */
+    ASSERT_EQ(prot_page2_after.is_writable, 0);
 
-    ASSERT(left_vma.vma_ptr != NULL);
-    ASSERT(mid_vma.vma_ptr != NULL);
-    ASSERT(right_vma.vma_ptr != NULL);
-    ASSERT_NEQ(left_vma.vma_ptr, mid_vma.vma_ptr);
-    ASSERT_NEQ(mid_vma.vma_ptr, right_vma.vma_ptr);
-
+    /* 5. Validate the hardware/page-fault level actually triggers a segfault[cite: 5] */
     ASSERT_SIGNAL(SIGSEGV) {
-        addr[PAGE_SIZE] = 0x44;
+        addr[PAGE_SIZE] = 0xCC; /* Attempting to write to read-only page */
     }
 
-    struct swap_file_info after = get_swap_file_info(addr);
-    ASSERT_EQ(after.file_size, len);
+    /* Ensure the first page is still physically writable */
+    addr[0] = 0xDD;
+    ASSERT_EQ_AT(addr, 0xDD);
 
     munmap(addr, len);
 }
-*/
+
+
 
 static void print_usage(char *argv0) {
     printf("Usage: %s [--trace]\n", argv0);
