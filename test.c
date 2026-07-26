@@ -28,7 +28,8 @@
 //REGISTER_TEST(test_mremap_enlarge);
 //REGISTER_TEST(test_mremap_failure_shrink);
 //REGISTER_TEST(test_munmap_named_swap_deallocate);
-REGISTER_TEST(test_mprotect_permissions);
+//REGISTER_TEST(test_mprotect_permissions);
+REGISTER_TEST(test_single_vma_growsdown);
 
 loff_t named_swap_file_size(struct file *file);
 loff_t named_swap_file_blocks(struct file *file);
@@ -654,6 +655,55 @@ void test_mprotect_permissions(void) {
     ASSERT_EQ_AT(addr, 0xDD);
 
     munmap(addr, len);
+}
+
+void test_single_vma_growsdown(void) {
+    size_t initial_size = PAGE_SIZE;
+    
+    /* 1. Allocate a downward-growing named swap VMA */
+    unsigned char *addr = mmap(NULL, initial_size, PROT_READ | PROT_WRITE,
+                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP | MAP_GROWSDOWN, -1, 0);
+    
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED) return;
+
+    /* Fault the initial allocated page */
+    addr[0] = 0xAA;
+
+    struct vma_info_args initial_vma = get_vma_info(addr);
+    struct swap_file_info initial_file = get_swap_file_info(addr);
+
+    ASSERT_EQ(initial_vma.vma_start, (unsigned long)addr);
+    
+    /* Assert the exact initial file size matches the mmap request */
+    ASSERT_EQ(initial_file.file_size, initial_size); 
+
+    /* 2. Target the page immediately below the current mapping */
+    unsigned char *lower_addr = addr - PAGE_SIZE;
+
+    /* 
+     * 3. Trigger downward growth natively. 
+     * This simply triggers a hardware page fault. The 6.14 kernel will 
+     * intercept it and seamlessly route it to expand_downwards.
+     */
+    lower_addr[0] = 0xBB;
+
+    /* 4. Verify the VMA successfully grew down */
+    struct vma_info_args expanded_vma = get_vma_info(lower_addr);
+    
+    /* The start address should have shifted down by exactly one page */
+    ASSERT_EQ(expanded_vma.vma_start, (unsigned long)lower_addr);
+    /* The end address must remain anchored to the original boundary */
+    ASSERT_EQ(expanded_vma.vma_end, initial_vma.vma_end);
+
+    /* 5. Verify the underlying named swap file expanded to match */
+    struct swap_file_info expanded_file = get_swap_file_info(lower_addr);
+    
+    /* Assert the exact expanded file size */
+    ASSERT_EQ(expanded_file.file_size, initial_size + PAGE_SIZE);
+
+    /* 6. Cleanup */
+    munmap(lower_addr, initial_size + PAGE_SIZE);
 }
 
 
