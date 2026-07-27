@@ -660,12 +660,37 @@ void test_mprotect_permissions(void) {
 void test_single_vma_growsdown(void) {
     size_t initial_size = PAGE_SIZE;
     
-    /* 1. Allocate a downward-growing named swap VMA */
-    unsigned char *addr = mmap(NULL, initial_size, PROT_READ | PROT_WRITE,
-                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP | MAP_GROWSDOWN, -1, 0);
-    
+    /* 
+     * The kernel enforces a stack_guard_gap (default 256 pages).
+     * We reserve enough space for the guard gap plus our target VMA.
+     */
+    size_t lower_vma_size = PAGE_SIZE * 256;
+    size_t total_reserved_size = lower_vma_size + initial_size;
+
+    /* 1. Find a safe, contiguous region in the address space */
+    unsigned char *reserved = mmap(NULL, total_reserved_size, PROT_NONE,
+                                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    ASSERT(reserved != MAP_FAILED);
+    if (reserved == MAP_FAILED) return;
+
+    /* Unmap it so we can safely carve it up using MAP_FIXED */
+    ASSERT_EQ(munmap(reserved, total_reserved_size), 0);
+
+    /* 2. Map the "earlier" (lower) VMA to reserve the physical layout */
+    unsigned char *lower_vma = mmap(reserved, lower_vma_size, PROT_NONE, 
+                                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+    ASSERT(lower_vma == reserved);
+
+    /* 3. Map our actual downward-growing named swap VMA directly above it */
+    unsigned char *addr = mmap(reserved + lower_vma_size, initial_size, 
+                               PROT_READ | PROT_WRITE,
+                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP | MAP_GROWSDOWN | MAP_FIXED, 
+                               -1, 0);
     ASSERT(addr != MAP_FAILED);
     if (addr == MAP_FAILED) return;
+
+    /* 4. Unmap the earlier VMA to guarantee the space below is 100% free */
+    ASSERT_EQ(munmap(lower_vma, lower_vma_size), 0);
 
     /* Fault the initial allocated page */
     addr[0] = 0xAA;
@@ -674,21 +699,28 @@ void test_single_vma_growsdown(void) {
     struct swap_file_info initial_file = get_swap_file_info(addr);
 
     ASSERT_EQ(initial_vma.vma_start, (unsigned long)addr);
-    
-    /* Assert the exact initial file size matches the mmap request */
     ASSERT_EQ(initial_file.file_size, initial_size); 
 
-    /* 2. Target the page immediately below the current mapping */
+    /* 5. Target the page immediately below the current mapping */
     unsigned char *lower_addr = addr - PAGE_SIZE;
 
+    printf("Targeting fault at address: %p\n", lower_addr);
+    printf("--> PAUSED: Switch to host GDB, set your conditional breakpoint, then press Enter here.\n");
+    
+    /* Flush stdout so you definitely see the message before it hangs */
+    fflush(stdout); 
+    
+    /* Wait for you to press Enter */
+    getchar();
+
     /* 
-     * 3. Trigger downward growth natively. 
-     * This simply triggers a hardware page fault. The 6.14 kernel will 
-     * intercept it and seamlessly route it to expand_downwards.
+     * 6. Trigger downward growth natively. 
+     * Because we unmapped the lower VMA, this space is guaranteed empty
+     * and free from stack_guard_gap collisions.
      */
     lower_addr[0] = 0xBB;
 
-    /* 4. Verify the VMA successfully grew down */
+    /* 7. Verify the VMA successfully grew down */
     struct vma_info_args expanded_vma = get_vma_info(lower_addr);
     
     /* The start address should have shifted down by exactly one page */
@@ -696,14 +728,14 @@ void test_single_vma_growsdown(void) {
     /* The end address must remain anchored to the original boundary */
     ASSERT_EQ(expanded_vma.vma_end, initial_vma.vma_end);
 
-    /* 5. Verify the underlying named swap file expanded to match */
+    /* 8. Verify the underlying named swap file expanded to match */
     struct swap_file_info expanded_file = get_swap_file_info(lower_addr);
     
     /* Assert the exact expanded file size */
     ASSERT_EQ(expanded_file.file_size, initial_size + PAGE_SIZE);
 
-    /* 6. Cleanup */
-    munmap(lower_addr, initial_size + PAGE_SIZE);
+    /* 9. Cleanup the entire expanded VMA */
+    munmap(expanded_vma.vma_start, expanded_vma.vma_end - expanded_vma.vma_start);
 }
 
 
