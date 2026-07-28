@@ -45,7 +45,7 @@ __used __section("__versions") = {
 	{ 0x72d79d83, "pgdir_shift" },
 	{ 0xef45223d, "boot_cpu_data" },
 	{ 0x1992a7d5, "named_swap_same_file_pte_count" },
-	{ 0xb21dcc7d, "named_swap_file_path" },
+	{ 0x8ccc52aa, "named_swap_file_path" },
 	{ 0xa916b694, "strnlen" },
 	{ 0x476b165a, "sized_strscpy" },
 	{ 0x331cae51, "__mmap_lock_do_trace_released" },

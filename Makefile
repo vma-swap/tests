@@ -11,6 +11,7 @@ KDIR_READY := $(wildcard $(KDIR)/Makefile)
 # Userspace test
 TEST_SRC := test.c test_main.c test_helper.c test_util.c
 TEST_BIN := test_runner
+BENCH_BIN := named_swap_cycle_bench
 CFLAGS := -Wall -Wextra -g
 
 # -------- TARGETS --------
@@ -23,7 +24,7 @@ all: vm
 endif
 
 host: kmod
-vm: $(TEST_BIN) install_module
+vm: $(TEST_BIN) $(BENCH_BIN) install_module
 port: vm
 
 # Build the kernel module
@@ -53,7 +54,10 @@ install_module:
 $(TEST_BIN): $(TEST_SRC) test_framework.h test_helper.h test_util.h
 	$(CC) $(CFLAGS) -o $@ $(TEST_SRC)
 
+$(BENCH_BIN): named_swap_cycle_bench.c test_helper.h
+	$(CC) $(CFLAGS) -o $@ named_swap_cycle_bench.c
+
 clean:
 	@if [ -n "$(KDIR_READY)" ]; then $(MAKE) -C $(KDIR) M=$(PWD) clean; fi
-	$(RM) -f $(TEST_BIN)
+	$(RM) -f $(TEST_BIN) $(BENCH_BIN)
 	-$(SUDO) rmmod swpctl_module

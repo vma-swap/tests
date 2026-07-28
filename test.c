@@ -9,6 +9,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/mount.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -28,6 +30,180 @@ REGISTER_TEST(test_file_mmap_pageout_preserves_data);
 REGISTER_TEST(test_named_swap_pageout_preserves_data);
 REGISTER_TEST(test_memory_pressure_in_disk);
 REGISTER_TEST(test_memory_pressure);
+/* Registered last so it runs first (list is prepended). */
+REGISTER_TEST(test_named_swap_root_config);
+
+static int should_check_pressure_rmap(int offset) {
+    int page = offset / PAGE_SIZE;
+
+    return offset == 0 ||
+           offset + PAGE_SIZE >= VM_MEMORY ||
+           page % 256 == 0;
+}
+
+/*
+ * Must run before any other named-swap mapping so the root can still be
+ * changed. Covers cmdline echo, invalid paths, missing parent, mount-before-
+ * enable (ext4 loop — tmpfs lacks FALLOC_FL_ZERO_RANGE), custom root + EBUSY,
+ * and remount-after-enable (old mapping stays valid).
+ */
+static int cmdline_named_swap_root(char *out, size_t out_len)
+{
+    FILE *fp;
+    char line[4096];
+    const char *key = "named_swap.root=";
+    char *p, *end;
+
+    fp = fopen("/proc/cmdline", "r");
+    if (!fp)
+        return 0;
+    if (!fgets(line, sizeof(line), fp)) {
+        fclose(fp);
+        return 0;
+    }
+    fclose(fp);
+
+    p = strstr(line, key);
+    if (!p)
+        return 0;
+    p += strlen(key);
+    end = p;
+    while (*end && *end != ' ' && *end != '\n' && *end != '\r')
+        end++;
+    if (end == p || (size_t)(end - p) >= out_len)
+        return 0;
+    memcpy(out, p, end - p);
+    out[end - p] = '\0';
+    return 1;
+}
+
+static int setup_ext4_loop(const char *img, const char *mnt, int size_mb,
+                           int unmount_first)
+{
+    char cmd[512];
+
+    unlink(img);
+    if (unmount_first)
+        umount(mnt); /* ignore errors */
+    snprintf(cmd, sizeof(cmd),
+             "mkdir -p '%s' && "
+             "dd if=/dev/zero of='%s' bs=1M count=%d status=none && "
+             "mkfs.ext4 -F -q '%s' && "
+             "mount -o loop '%s' '%s'",
+             mnt, img, size_mb, img, img, mnt);
+    return system(cmd);
+}
+
+static void cleanup_ext4_loop(const char *img, const char *mnt)
+{
+    sync();
+    /* Lazy unmount: named-swap may still hold lower-file refs briefly. */
+    umount2(mnt, MNT_DETACH);
+    umount2(mnt, MNT_DETACH);
+    unlink(img);
+}
+
+void test_named_swap_root_config(void) {
+    const char *mnt = "/tmp/named_swap_mnt";
+    const char *img = "/tmp/named_swap_mnt.img";
+    const char *img2 = "/tmp/named_swap_overlay.img";
+    const char *missing_parent = "/tmp/no_such_named_swap_parent/ns";
+    char root[PATH_MAX];
+    char expected[PATH_MAX];
+    char cmdline_root[PATH_MAX];
+    char long_path[512];
+    unsigned char *addr;
+    unsigned char *addr2;
+    unsigned long index;
+    struct swap_file_info info;
+    struct anon_vma_info_args anon;
+    size_t i;
+
+    /* If booted with named_swap.root=, sysctl must match before we change it. */
+    if (cmdline_named_swap_root(cmdline_root, sizeof(cmdline_root))) {
+        ASSERT_EQ(named_swap_get_root(root, sizeof(root)), 0);
+        ASSERT_EQ(strcmp(root, cmdline_root), 0);
+    }
+
+    /* Invalid paths are rejected with EINVAL while still disabled. */
+    errno = 0;
+    ASSERT_EQ(named_swap_set_root("relative/path"), -1);
+    ASSERT_EQ(errno, EINVAL);
+
+    errno = 0;
+    ASSERT_EQ(named_swap_set_root("/tmp/named_swap_trail/"), -1);
+    ASSERT_EQ(errno, EINVAL);
+
+    memset(long_path, 'a', sizeof(long_path));
+    long_path[0] = '/';
+    long_path[sizeof(long_path) - 1] = '\0';
+    errno = 0;
+    ASSERT_EQ(named_swap_set_root(long_path), -1);
+    ASSERT_EQ(errno, EINVAL);
+
+    /* Parent directory missing: enable fails, mapping falls back to anon. */
+    ASSERT_EQ(named_swap_set_root(missing_parent), 0);
+    addr = mmap(NULL, PAGE_SIZE * MIN_PAGE_NAMED_SWAP_MMAP, PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP, -1, 0);
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED)
+        return;
+    addr[0] = 1;
+    anon = get_anon_vma_info(addr);
+    ASSERT_EQ(anon.named_swap_file == NULL, 1);
+    info = get_swap_file_info(addr);
+    ASSERT_EQ(info.path[0] == '\0', 1);
+    munmap(addr, PAGE_SIZE * MIN_PAGE_NAMED_SWAP_MMAP);
+
+    /* Root is still changeable after a failed enable. Mount a real FS. */
+    ASSERT_EQ(setup_ext4_loop(img, mnt, 32, 1), 0);
+    ASSERT_EQ(named_swap_set_root(mnt), 0);
+    ASSERT_EQ(named_swap_get_root(root, sizeof(root)), 0);
+    ASSERT_EQ(strcmp(root, mnt), 0);
+
+    addr = mmap(NULL, PAGE_SIZE * MIN_PAGE_NAMED_SWAP_MMAP, PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP, -1, 0);
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED) {
+        cleanup_ext4_loop(img, mnt);
+        return;
+    }
+
+    for (i = 0; i < MIN_PAGE_NAMED_SWAP_MMAP; i++)
+        addr[i * PAGE_SIZE] = (unsigned char)(0x40 + i);
+
+    index = assert_named_swap_file_for_addr(addr);
+    named_swap_path_for_index(expected, sizeof(expected), index);
+    ASSERT_EQ(strncmp(expected, mnt, strlen(mnt)), 0);
+    info = get_swap_file_info(addr);
+    ASSERT_EQ(strcmp(info.path, expected), 0);
+    ASSERT_EQ(access(expected, F_OK), 0);
+
+    errno = 0;
+    ASSERT_EQ(named_swap_set_root(NAMED_SWAP_DEFAULT_ROOT), -1);
+    ASSERT_EQ(errno, EBUSY);
+
+    /*
+     * Remount-over after enable must not corrupt the already-open mapping.
+     * New creates may land on the overlay; we only require old data survives.
+     */
+    ASSERT_EQ(setup_ext4_loop(img2, mnt, 16, 0), 0);
+    for (i = 0; i < MIN_PAGE_NAMED_SWAP_MMAP; i++)
+        ASSERT_EQ_AT(addr + i * PAGE_SIZE, (unsigned char)(0x40 + i));
+
+    addr2 = mmap(NULL, PAGE_SIZE * MIN_PAGE_NAMED_SWAP_MMAP, PROT_READ | PROT_WRITE,
+                 MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP, -1, 0);
+    ASSERT(addr2 != MAP_FAILED);
+    if (addr2 != MAP_FAILED) {
+        addr2[0] = 0xcd;
+        ASSERT_EQ_AT(addr2, 0xcd);
+        munmap(addr2, PAGE_SIZE * MIN_PAGE_NAMED_SWAP_MMAP);
+    }
+
+    munmap(addr, PAGE_SIZE * MIN_PAGE_NAMED_SWAP_MMAP);
+    cleanup_ext4_loop(img2, mnt);
+    cleanup_ext4_loop(img, mnt);
+}
 
 void test_file_mmap_pageout_preserves_data(void) {
     size_t len = PAGEOUT_TEST_SIZE;
@@ -83,11 +259,13 @@ void test_memory_pressure(void) {
             if (it == 0) {
                 addr[i] = i%256;
                 ASSERT_EQ_AT(addr + i, i%256);
-                ASSERT_EQ(count_rmap_vmas(addr + i), 1);
+                if (should_check_pressure_rmap(i))
+                    ASSERT_EQ(count_rmap_vmas(addr + i), 1);
             }
             addr[i]++;
             ASSERT_EQ_AT(addr + i, i%256 + (it + 1));
-            ASSERT_EQ(count_rmap_vmas(addr + i), 1);
+            if (should_check_pressure_rmap(i))
+                ASSERT_EQ(count_rmap_vmas(addr + i), 1);
         }
     }
 

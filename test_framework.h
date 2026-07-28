@@ -261,12 +261,15 @@ static inline unsigned long assert_named_swap_file_for_addr_impl(
     struct swap_file_info swap_file_info = get_swap_file_info(addr);
     unsigned long index = 0;
     char expected_path[PATH_MAX];
+    char root[PATH_MAX];
     int parsed;
     int access_ret;
     int access_errno;
 
     parsed = parse_named_swap_index(swap_file_info.path, &index);
     named_swap_path_for_index(expected_path, sizeof(expected_path), index);
+    if (named_swap_get_root(root, sizeof(root)) != 0)
+        snprintf(root, sizeof(root), "%s", NAMED_SWAP_DEFAULT_ROOT);
     errno = 0;
     access_ret = access(expected_path, F_OK);
     access_errno = errno;
@@ -279,14 +282,14 @@ static inline unsigned long assert_named_swap_file_for_addr_impl(
                 " [%s:%d] named swap file for %s\n"
                 "  address:            %p\n"
                 "  returned path:      \"%s\"\n"
-                "  expected prefix:    \"" NAMED_SWAP_PREFIX "\"\n"
+                "  named_swap root:    \"%s\"\n"
                 "  parsed index:       %s\n"
                 "  index value:        %lu\n"
                 "  reconstructed path: \"%s\"\n"
                 "  access result:      %d\n"
                 "  access errno:       %d (%s)\n",
                 file, line, addr_expr, addr,
-                swap_file_info.path, parsed ? "yes" : "no", index,
+                swap_file_info.path, root, parsed ? "yes" : "no", index,
                 expected_path, access_ret, access_errno,
                 strerror(access_errno));
         current_test_failed = 1;

@@ -158,14 +158,66 @@ unsigned int get_named_swap_alias_count(void *addr) {
     return args.count;
 }
 
+int named_swap_get_root(char *buf, size_t size) {
+    FILE *fp;
+    size_t len;
+
+    if (!buf || size == 0)
+        return -1;
+
+    fp = fopen(NAMED_SWAP_SYSCTL, "r");
+    if (!fp) {
+        snprintf(buf, size, "%s", NAMED_SWAP_DEFAULT_ROOT);
+        return 0;
+    }
+    if (!fgets(buf, size, fp)) {
+        fclose(fp);
+        return -1;
+    }
+    fclose(fp);
+    len = strlen(buf);
+    while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r'))
+        buf[--len] = '\0';
+    if (len == 0) {
+        snprintf(buf, size, "%s", NAMED_SWAP_DEFAULT_ROOT);
+        return 0;
+    }
+    return 0;
+}
+
+int named_swap_set_root(const char *path) {
+    int fd;
+    ssize_t n;
+    int err;
+
+    fd = open(NAMED_SWAP_SYSCTL, O_WRONLY | O_TRUNC);
+    if (fd < 0)
+        return -1;
+    n = write(fd, path, strlen(path));
+    err = errno;
+    if (close(fd) != 0 && n >= 0) {
+        return -1;
+    }
+    if (n < 0) {
+        errno = err;
+        return -1;
+    }
+    return 0;
+}
+
 int parse_named_swap_index(const char *path, unsigned long *index) {
+    char root[PATH_MAX];
+    size_t root_len;
     const char *digits;
     char *end;
 
-    if (strncmp(path, NAMED_SWAP_PREFIX, strlen(NAMED_SWAP_PREFIX)) != 0)
+    if (named_swap_get_root(root, sizeof(root)) != 0)
+        return 0;
+    root_len = strlen(root);
+    if (strncmp(path, root, root_len) != 0 || path[root_len] != '/')
         return 0;
 
-    digits = path + strlen(NAMED_SWAP_PREFIX);
+    digits = path + root_len + 1;
     if (*digits == '\0')
         return 0;
 
@@ -180,7 +232,11 @@ int parse_named_swap_index(const char *path, unsigned long *index) {
 }
 
 void named_swap_path_for_index(char *path, size_t size, unsigned long index) {
-    snprintf(path, size, NAMED_SWAP_PREFIX "%lu", index);
+    char root[PATH_MAX];
+
+    if (named_swap_get_root(root, sizeof(root)) != 0)
+        snprintf(root, sizeof(root), "%s", NAMED_SWAP_DEFAULT_ROOT);
+    snprintf(path, size, "%s/%lu", root, index);
 }
 
 pid_t start_ftrace(void) {
@@ -196,9 +252,7 @@ pid_t start_ftrace(void) {
             "trace-cmd",
             "record",
             "-e",
-            "mmap:*",
-            "-e",
-            "kmem:*",
+            "named_swap:*",
             NULL,
         };
 

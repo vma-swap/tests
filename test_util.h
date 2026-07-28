@@ -9,7 +9,8 @@
 
 #define DEVICE "/dev/swapctl"
 #define RMAP_WALK_MAX_VMAS 64
-#define NAMED_SWAP_PREFIX "/.named_swap/"
+#define NAMED_SWAP_SYSCTL "/proc/sys/vm/named_swap_root"
+#define NAMED_SWAP_DEFAULT_ROOT "/.named_swap"
 
 struct vma_info_args {
     void *virtual_address;
@@ -95,6 +96,8 @@ unsigned long get_folio_mapcount(void *addr);
 unsigned int get_named_swap_alias_count(void *addr);
 int parse_named_swap_index(const char *path, unsigned long *index);
 void named_swap_path_for_index(char *path, size_t size, unsigned long index);
+int named_swap_get_root(char *buf, size_t size);
+int named_swap_set_root(const char *path);
 int signal_fd(int fd);
 int wait_fd(int fd);
 
