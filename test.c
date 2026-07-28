@@ -25,11 +25,11 @@
 //REGISTER_TEST(test_zero_file);
 //REGISTER_TEST(test_read_first_fault);
 //REGISTER_TEST(test_write_fault);
-//REGISTER_TEST(test_mremap_enlarge);
-//REGISTER_TEST(test_mremap_failure_shrink);
-//REGISTER_TEST(test_munmap_named_swap_deallocate);
-//REGISTER_TEST(test_mprotect_permissions);
-REGISTER_TEST(test_single_vma_growsdown);
+REGISTER_TEST(test_mremap_enlarge);
+REGISTER_TEST(test_mremap_failure_shrink);
+REGISTER_TEST(test_munmap_named_swap_deallocate);
+REGISTER_TEST(test_mprotect_permissions);
+//REGISTER_TEST(test_single_vma_growsdown);
 
 loff_t named_swap_file_size(struct file *file);
 loff_t named_swap_file_blocks(struct file *file);
