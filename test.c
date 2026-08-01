@@ -25,11 +25,13 @@
 //REGISTER_TEST(test_zero_file);
 //REGISTER_TEST(test_read_first_fault);
 //REGISTER_TEST(test_write_fault);
-REGISTER_TEST(test_mremap_enlarge);
-REGISTER_TEST(test_mremap_failure_shrink);
-REGISTER_TEST(test_munmap_named_swap_deallocate);
-REGISTER_TEST(test_mprotect_permissions);
+//REGISTER_TEST(test_mremap_enlarge);
+//REGISTER_TEST(test_mremap_failure_shrink);
+//REGISTER_TEST(test_munmap_named_swap_deallocate);
+//REGISTER_TEST(test_mprotect_permissions);
 //REGISTER_TEST(test_single_vma_growsdown);
+//REGISTER_TEST(test_mremap_left_enlarge_only_fails_deliberately);
+REGISTER_TEST(test_mremap_left_enlarge_only_evict_and_resume);
 
 loff_t named_swap_file_size(struct file *file);
 loff_t named_swap_file_blocks(struct file *file);
@@ -736,6 +738,297 @@ void test_single_vma_growsdown(void) {
 
     /* 9. Cleanup the entire expanded VMA */
     munmap(expanded_vma.vma_start, expanded_vma.vma_end - expanded_vma.vma_start);
+}
+
+void test_mremap_left_enlarge_only_fails_deliberately(void) {
+    size_t page_size = PAGE_SIZE;
+    size_t total_size = page_size * 20;
+
+    /* 1. Map continuous region for anon_vma compatibility */
+    unsigned char *addr = mmap(NULL, total_size, PROT_READ | PROT_WRITE,
+                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP, -1, 0);
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED) return;
+
+    for (int i = 0; i < 20; i++) {
+        addr[i * page_size] = (unsigned char)i;
+    }
+
+    /* 
+     * 2. Sculpt the memory landscape.
+     * Page 0: Left Anchor (Case 1)
+     * Page 1: Hole
+     * Page 2: Right Anchor (Case 1)
+     * Page 3: Hole
+     * Page 4: Moving Source (Case 2 & 5)
+     * Page 5: Hole
+     * Page 6: Isolated Target (Case 2)
+     * Page 7: Hole
+     * Page 8: Left Anchor (Case 3)
+     * Page 9: Target (Case 3)
+     * Page 10: Hole
+     * Page 11: Target (Case 5)
+     * Page 12: Right Anchor (Case 5)
+     * Page 13: Hole
+     * Page 14: Left Anchor (Case 4)
+     * Page 15: Target (Case 4)
+     * Page 16: Right Anchor (Case 4)
+     * Page 17: Moving Source (Case 3 & 4)
+     */
+    munmap(addr + 1 * page_size, 1 * page_size);
+    munmap(addr + 3 * page_size, 1 * page_size);
+    munmap(addr + 5 * page_size, 1 * page_size);
+    munmap(addr + 7 * page_size, 1 * page_size);
+    munmap(addr + 10 * page_size, 1 * page_size);
+    munmap(addr + 13 * page_size, 1 * page_size);
+
+    void *res;
+
+    /* 
+     * CASE 1: Standard In-Place Expansion (Expands Right)
+     * Expand Page 0 into Hole 1. Should consume Page 2.
+     * i.e that validates that in mremap no MAYMOVE, the left VMA survives and the right VMA is destroyed.
+     */
+    printf("CASE 1: In-Place Expansion (Expands Right)\n");
+    struct vma_info_args c1_left = get_vma_info(addr + 0);
+    struct vma_info_args c1_right = get_vma_info(addr + 2 * page_size);
+    ASSERT(c1_left.vma_ptr != NULL && c1_right.vma_ptr != NULL);
+    ASSERT_NEQ(c1_left.vma_ptr, c1_right.vma_ptr);
+
+    res = mremap(addr + 0, page_size, 2 * page_size, 0);
+    ASSERT_EQ(res, addr + 0);
+
+    struct vma_info_args c1_merged = get_vma_info(addr + 0);
+    ASSERT_EQ(c1_merged.vma_start, c1_left.vma_start);
+    /* PROOF: Left structure survived, Right structure was destroyed - trough the existence of the vma struct*/
+    ASSERT_EQ(c1_merged.vma_ptr, c1_left.vma_ptr);
+    ASSERT_NEQ(c1_merged.vma_ptr, c1_right.vma_ptr);
+
+
+    /* 
+     * CASE 2: MREMAP_MAYMOVE to isolated hole (No Neighbors)
+     * Move Page 4 to Hole 6.
+     * when moved to a hole with no neighbors, a new vma is born - we dont inspect vma_ptr
+     */
+    printf("CASE 2: MREMAP_MAYMOVE to isolated hole (No Neighbors)\n");
+    struct vma_info_args c2_src = get_vma_info(addr + 4 * page_size);
+    res = mremap(addr + 4 * page_size, page_size, page_size, MREMAP_MAYMOVE | MREMAP_FIXED, addr + 6 * page_size);
+    ASSERT_EQ(res, addr + 6 * page_size);
+    
+    struct vma_info_args c2_target = get_vma_info(addr + 6 * page_size);
+    ASSERT_EQ(c2_target.vma_start, (unsigned long)(addr + 6 * page_size)); 
+
+
+    /* 
+     * CASE 3: MREMAP_MAYMOVE to hole with ONLY Left Neighbor
+     * Move Page 17 to Hole 9. Left neighbor is Page 8.
+     */
+    printf("CASE 3: MREMAP_MAYMOVE to hole with ONLY Left Neighbor\n");
+    struct vma_info_args c3_left = get_vma_info(addr + 8 * page_size);
+    
+    res = mremap(addr + 17 * page_size, page_size, page_size, MREMAP_MAYMOVE | MREMAP_FIXED, addr + 9 * page_size);
+    ASSERT_EQ(res, addr + 9 * page_size);
+    
+    struct vma_info_args c3_merged = get_vma_info(addr + 8 * page_size);
+    ASSERT_EQ(c3_merged.vma_start, c3_left.vma_start); 
+    /* PROOF: Existing Left structure consumed the incoming mapping */
+    ASSERT_EQ(c3_merged.vma_ptr, c3_left.vma_ptr); 
+
+
+    /* 
+     * CASE 4: MREMAP_MAYMOVE to hole with BOTH Left and Right Neighbors
+     * Move Page 18 to Hole 15. Neighbors: 14 (Left) and 16 (Right).
+     */
+    printf("CASE 4: MREMAP_MAYMOVE to hole with BOTH Left and Right Neighbors\n");
+    struct vma_info_args c4_left = get_vma_info(addr + 14 * page_size);
+    struct vma_info_args c4_right = get_vma_info(addr + 16 * page_size);
+    
+    res = mremap(addr + 18 * page_size, page_size, page_size, MREMAP_MAYMOVE | MREMAP_FIXED, addr + 15 * page_size);
+    ASSERT_EQ(res, addr + 15 * page_size);
+    
+    struct vma_info_args c4_merged = get_vma_info(addr + 14 * page_size);
+    ASSERT_EQ(c4_merged.vma_start, c4_left.vma_start); 
+    /* PROOF: Left structure consumed BOTH the incoming mapping and the Right structure */
+    ASSERT_EQ(c4_merged.vma_ptr, c4_left.vma_ptr);
+    ASSERT_NEQ(c4_merged.vma_ptr, c4_right.vma_ptr);
+
+
+    /* 
+     * CASE 5: MREMAP_MAYMOVE to hole with ONLY Right Neighbor
+     * Move Page 6 (from Case 2) to Hole 11. Right neighbor is Page 12.
+     * THIS IS THE EXCLUSIVE LEFT ENLARGEMENT SCENARIO.
+     */
+    printf("CASE 5: MREMAP_MAYMOVE to hole with ONLY Right Neighbor\n");
+    struct vma_info_args c5_right = get_vma_info(addr + 12 * page_size);
+    
+    res = mremap(addr + 6 * page_size, page_size, page_size, MREMAP_MAYMOVE | MREMAP_FIXED, addr + 11 * page_size);
+    ASSERT_EQ(res, addr + 11 * page_size);
+    
+    struct vma_info_args c5_merged = get_vma_info(addr + 11 * page_size);
+    
+    /* PROOF 1: The Right VMA is the surviving metadata structure */
+    ASSERT_EQ(c5_merged.vma_ptr, c5_right.vma_ptr); 
+    
+    /* PROOF 2: The surviving structure's start boundary physically shifted Left */
+    ASSERT_EQ(c5_merged.vma_start, c5_right.vma_start - page_size);
+
+    /* Clean up */
+    munmap(addr, total_size);
+}
+
+void test_mremap_left_enlarge_only_evict_and_resume(void) {
+    size_t page_size = PAGE_SIZE;
+
+    /* 
+     * Allocate a continuous base block to guarantee anon_vma compatibility 
+     * and continuous pgoff across all pages.
+     */
+    unsigned char *base = mmap(NULL, 10 * page_size, PROT_READ | PROT_WRITE,
+                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP, -1, 0);
+    ASSERT(base != MAP_FAILED);
+
+    /* 
+     * Allocate and IMMEDIATELY UNMAP the scratch space.
+     * This reserves a known-valid virtual address range that is guaranteed 
+     * to be completely empty, avoiding any unintended VMA merges during eviction.
+     */
+    unsigned char *scratch = mmap(NULL, 10 * page_size, PROT_NONE,
+                                  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    ASSERT(scratch != MAP_FAILED);
+    munmap(scratch, 10 * page_size);
+
+    /* Fault in the base pages to establish kernel structures and anon_vma */
+    for(int i = 0; i < 10; i++) {
+        base[i * page_size] = (unsigned char)i;
+    }
+
+    /* 
+     * Isolate our test islands by punching holes so they do not interfere.
+     * Island 1 (Pages 0-1): For Right VMA expanding left
+     * Island 2 (Pages 3-4): For Left VMA expanding right
+     * Island 3 (Pages 6-8): For Left VMA consuming both
+     */
+    munmap(base + 2 * page_size, page_size);
+    munmap(base + 5 * page_size, page_size);
+    munmap(base + 9 * page_size, page_size);
+
+    void *res;
+
+    /* =====================================================================
+     * SCENARIO 1: Right VMA Expands Left (THE EXCLUSIVE LEFT ENLARGEMENT)
+     * Island 1: base[0], base[1]
+     * ===================================================================== */
+    
+    /* Step 1: Evict base[0]. Leaves base[1] isolated. */
+    printf("SCENARIO 1: Right VMA Expands Left (Exclusive Left Enlargement)\n");
+    res = mremap(base + 0, page_size, page_size, MREMAP_MAYMOVE | MREMAP_FIXED, scratch + 0);
+    ASSERT_EQ(res, scratch + 0);
+    
+    struct vma_info_args orig_right_c1 = get_vma_info(base + 1 * page_size);
+    
+    /* Step 2: Return base[0] to its home. Neighbor is ONLY base[1] (Right). */
+    res = mremap(scratch + 0, page_size, page_size, MREMAP_MAYMOVE | MREMAP_FIXED, base + 0);
+    ASSERT_EQ(res, base + 0);
+    
+    struct vma_info_args merged_c1 = get_vma_info(base + 0);
+    
+    /* PROOF: The Right VMA metadata pointer survived, and its start boundary shifted left */
+    ASSERT_EQ(merged_c1.vma_ptr, orig_right_c1.vma_ptr); 
+    ASSERT_EQ(merged_c1.vma_start, orig_right_c1.vma_start - page_size); 
+
+
+    /* =====================================================================
+     * SCENARIO 2: Left VMA Expands Right (Standard Consume)
+     * Island 2: base[3], base[4]
+     * ===================================================================== */
+     
+    /* Step 1: Evict base[4]. Leaves base[3] isolated. */
+    printf("SCENARIO 2: Left VMA Expands Right (Standard Consume)\n");
+    res = mremap(base + 4 * page_size, page_size, page_size, MREMAP_MAYMOVE | MREMAP_FIXED, scratch + 4 * page_size);
+    ASSERT_EQ(res, scratch + 4 * page_size);
+    
+    struct vma_info_args orig_left_c2 = get_vma_info(base + 3 * page_size);
+    
+    /* 
+     * Step 2: Return base[4] to its home. 
+     * Neighbor is ONLY base[3] (Left) because base[5] is a hole! 
+     */
+    res = mremap(scratch + 4 * page_size, page_size, page_size, MREMAP_MAYMOVE | MREMAP_FIXED, base + 4 * page_size);
+    ASSERT_EQ(res, base + 4 * page_size);
+    
+    struct vma_info_args merged_c2 = get_vma_info(base + 3 * page_size);
+    
+    /* PROOF: The Left VMA metadata pointer survived, and its start boundary did not move */
+    ASSERT_EQ(merged_c2.vma_ptr, orig_left_c2.vma_ptr); 
+    ASSERT_EQ(merged_c2.vma_start, orig_left_c2.vma_start); 
+
+
+    /* =====================================================================
+     * SCENARIO 3: Left VMA Expands Both (Dual Consume)
+     * Island 3: base[6], base[7], base[8]
+     * ===================================================================== */
+     
+    /* Step 1: Evict the middle piece (base[7]). Leaves base[6] (Left) and base[8] (Right). */
+    printf("SCENARIO 3: Left VMA Expands Both (Dual Consume)\n");
+    res = mremap(base + 7 * page_size, page_size, page_size, MREMAP_MAYMOVE | MREMAP_FIXED, scratch + 7 * page_size);
+    ASSERT_EQ(res, scratch + 7 * page_size);
+    
+    struct vma_info_args orig_both_l = get_vma_info(base + 6 * page_size);
+    struct vma_info_args orig_both_r = get_vma_info(base + 8 * page_size);
+    
+    /* Step 2: Return base[7] to its home. Neighbors are base[6] and base[8]. */
+    res = mremap(scratch + 7 * page_size, page_size, page_size, MREMAP_MAYMOVE | MREMAP_FIXED, base + 7 * page_size);
+    ASSERT_EQ(res, base + 7 * page_size);
+    
+    struct vma_info_args merged_c3 = get_vma_info(base + 6 * page_size);
+    
+    /* PROOF: The Left VMA metadata pointer survived, consumed Right, and start boundary did not move */
+    ASSERT_EQ(merged_c3.vma_ptr, orig_both_l.vma_ptr); 
+    ASSERT_NEQ(merged_c3.vma_ptr, orig_both_r.vma_ptr); 
+    ASSERT_EQ(merged_c3.vma_start, orig_both_l.vma_start); 
+
+    /* =====================================================================
+     * SCENARIO 4: Unfaulted Merge Attempt (The "Cheat Code")
+     * We map two separate, unconnected regions and do NOT fault them in.
+     * We move the source directly to the left of the right anchor.
+     * ===================================================================== */
+    
+    /* 1. Allocate a completely separate source page (Unfaulted). add MAP_NAMED_SWAP to fail case  */
+    printf("SCENARIO 4: Unfaulted Merge Attempt (The \"Cheat Code\")\n");
+    unsigned char *unfaulted_src = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
+                                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    ASSERT(unfaulted_src != MAP_FAILED);
+
+    /* 2. Reserve a 2-page block for our destination to guarantee contiguous virtual space */
+    unsigned char *unfaulted_dest_area = mmap(NULL, 2 * page_size, PROT_NONE,
+                                              MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    ASSERT(unfaulted_dest_area != MAP_FAILED);
+    munmap(unfaulted_dest_area, 2 * page_size);
+
+    /* 3. Map the Right Anchor VMA at the second page of the destination (Unfaulted). add MAP_NAMED_SWAP to fail case */
+    unsigned char *unfaulted_right = mmap(unfaulted_dest_area + page_size, page_size, 
+                                          PROT_READ | PROT_WRITE,
+                                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    ASSERT(unfaulted_right != MAP_FAILED);
+
+    struct vma_info_args orig_unfaulted_right = get_vma_info(unfaulted_right);
+
+    /* 4. Move the Source VMA directly to the left of the Right Anchor VMA */
+    res = mremap(unfaulted_src, page_size, page_size, MREMAP_MAYMOVE | MREMAP_FIXED, unfaulted_dest_area);
+    ASSERT_EQ(res, unfaulted_dest_area);
+
+    struct vma_info_args merged_c4 = get_vma_info(unfaulted_dest_area);
+
+    /* 
+     * PROOF: If the kernel forged the offset (cheat code active), they merged!
+     * We assert that the Right VMA metadata pointer survived and expanded left.
+     */
+    ASSERT_EQ(merged_c4.vma_ptr, orig_unfaulted_right.vma_ptr);
+    ASSERT_EQ(merged_c4.vma_start, orig_unfaulted_right.vma_start - page_size);
+
+    /* Clean up */
+    munmap(base, 10 * page_size);
+    munmap(unfaulted_dest_area, 2 * page_size);
 }
 
 
