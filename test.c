@@ -27,11 +27,12 @@
 //REGISTER_TEST(test_write_fault);
 //REGISTER_TEST(test_mremap_enlarge);
 //REGISTER_TEST(test_mremap_failure_shrink);
-//REGISTER_TEST(test_munmap_named_swap_deallocate);
-REGISTER_TEST(test_mprotect_permissions);
+REGISTER_TEST(test_munmap_named_swap_deallocate);
+//REGISTER_TEST(test_mprotect_permissions);
 //REGISTER_TEST(test_single_vma_growsdown);
 //REGISTER_TEST(test_mremap_left_enlarge_only_fails_deliberately);
 //REGISTER_TEST(test_mremap_left_enlarge_only_evict_and_resume);
+//REGISTER_TEST(test_simple_mremap_to_the_left_case);
 
 loff_t named_swap_file_size(struct file *file);
 loff_t named_swap_file_blocks(struct file *file);
@@ -582,20 +583,28 @@ void test_munmap_named_swap_deallocate(void){
     unsigned long initial_blocks = before.allocated_blocks;
     ASSERT_ABOVE(initial_blocks, 0); 
 
-    /* 3. Unmap the middle page to trigger named_swap_deallocate */
+    /* 4. Unmap the middle page to trigger named_swap_deallocate */
     ASSERT_EQ(munmap(addr + PAGE_SIZE, PAGE_SIZE), 0);
 
-    /* 4. Verify the left and right pages are still intact */
+    /* 5. Validate through /proc/self/maps that exactly two distinct VMAs now exist at these boundaries */
+    ASSERT(check_vma_in_maps(addr, addr + PAGE_SIZE) == 1);
+    ASSERT(check_vma_in_maps(addr + PAGE_SIZE * 2, addr + PAGE_SIZE * 3) == 1);
+    
+    /* Ensure the middle VMA is completely gone */
+    ASSERT(check_vma_in_maps(addr + PAGE_SIZE, addr + PAGE_SIZE * 2) == 0);
+    /* ---------------------- */
+
+    /* 6. Verify the left and right pages are still intact */
     ASSERT_EQ_AT(addr, 0x11);
     ASSERT_EQ_AT(addr + PAGE_SIZE * 2, 0x33);
 
 
-    /* 6. Verify the apparent backing file size remains unchanged due to KEEP_SIZE */
+    /* 7. Verify the apparent backing file size remains unchanged due to KEEP_SIZE */
     struct swap_file_info after = get_swap_file_info(addr);
     ASSERT_EQ(after.file_size, len);
 
     /* 
-     * 7. Verify the physical blocks decreased by exactly the unmapped size.
+     * 8. Verify the physical blocks decreased by exactly the unmapped size.
      * i_blocks are measured in 512-byte sectors.
      * We unmapped exactly 1 PAGE_SIZE (4096 bytes).
      * 4096 / 512 = 8 blocks should have been freed.
@@ -606,7 +615,7 @@ void test_munmap_named_swap_deallocate(void){
     ASSERT_EQ(initial_blocks, after_blocks + blocks_freed);
     
 
-    /* 5. Verify accessing the unmapped middle page causes a segfault */
+    /* 9. Verify accessing the unmapped middle page causes a segfault */
     ASSERT_SIGNAL(SIGSEGV) {
         addr[PAGE_SIZE] = 0x44;
     }
@@ -1077,6 +1086,50 @@ void test_mremap_left_enlarge_only_evict_and_resume(void) {
 
     /* Clean up */
     munmap(arena, 10 * page_size);
+}
+
+void test_simple_mremap_to_the_left_case(void) {
+    size_t page_size = PAGE_SIZE;
+    size_t total_size = page_size * 2;
+
+    /* 1. Map and immediately unmap 2 pages to reserve a contiguous virtual address area */
+    unsigned char *initial_area = mmap(NULL, total_size, PROT_NONE,
+                                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    ASSERT(initial_area != MAP_FAILED);
+    if (initial_area == MAP_FAILED) return;
+    
+    ASSERT_EQ(munmap(initial_area, total_size), 0);
+
+    /* 2. Map exactly one page into the RIGHT half of this reserved area (the second page) */
+    unsigned char *old_address = initial_area + page_size;
+    unsigned char *addr = mmap(old_address, page_size, PROT_READ | PROT_WRITE,
+                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP | MAP_FIXED, -1, 0);
+    
+    ASSERT_EQ(addr, old_address);
+    if (addr == MAP_FAILED) return;
+
+    /* Fault the page to establish kernel structures */
+    addr[0] = 0xAA;
+
+    /* 3. mremap the page to the LEFT half (the first page), expanding it to cover both pages */
+    unsigned char *new_start = initial_area;
+    
+    void *res = mremap(old_address, 
+                       page_size, 
+                       total_size, 
+                       MREMAP_MAYMOVE | MREMAP_FIXED, 
+                       new_start);
+
+    /* 4. Verify mremap did not fail and returned the expected left-shifted address */
+    ASSERT(res != MAP_FAILED);
+    ASSERT_EQ(res, new_start);
+
+    /* 5. Cleanup */
+    if (res != MAP_FAILED) {
+        munmap(res, total_size);
+    } else {
+        munmap(old_address, page_size);
+    }
 }
 
 

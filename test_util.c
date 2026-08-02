@@ -179,3 +179,30 @@ void stop_ftrace(char *test_name, pid_t pid) {
     snprintf(command, sizeof(command), "trace-cmd report > %s.trace", test_name);
     system(command);
 }
+
+int check_vma_in_maps(unsigned char *expected_start, unsigned char *expected_end) {
+    FILE *fp = fopen("/proc/self/maps", "r");
+    if (!fp) {
+        perror("Failed to open /proc/self/maps");
+        return 0;
+    }
+
+    char line[512];
+    unsigned long start, end;
+    int found = 0;
+
+    /* Read the maps file line by line */
+    while (fgets(line, sizeof(line), fp)) {
+        /* Parse the start and end addresses from the standard format: "start-end perms offset..." */
+        if (sscanf(line, "%lx-%lx", &start, &end) == 2) {
+            /* Check if this VMA matches our expected boundaries exactly */
+            if (start == (unsigned long)expected_start && end == (unsigned long)expected_end) {
+                found = 1;
+                break;
+            }
+        }
+    }
+    
+    fclose(fp);
+    return found;
+}

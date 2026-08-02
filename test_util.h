@@ -92,6 +92,7 @@ struct folio_info_args get_folio_info(void *addr);
 unsigned short get_current_cgroup(void);
 int parse_named_swap_index(const char *path, unsigned long *index);
 void named_swap_path_for_index(char *path, size_t size, unsigned long index);
+int check_vma_in_maps(unsigned char *expected_start, unsigned char *expected_end);
 
 pid_t start_ftrace(void);
 void stop_ftrace(char *test_name, pid_t pid);
