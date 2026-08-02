@@ -988,47 +988,63 @@ void test_mremap_left_enlarge_only_evict_and_resume(void) {
     ASSERT_EQ(merged_c3.vma_start, orig_both_l.vma_start); 
 
     /* =====================================================================
-     * SCENARIO 4: Unfaulted Merge Attempt (The "Cheat Code")
-     * We map two separate, unconnected regions and do NOT fault them in.
-     * We move the source directly to the left of the right anchor.
+     * SCENARIO 4: Unfaulted Merge Attempt (The "Cheat Code" - kenel invents vm_pgoff 
+     * while moving unfaulted vma's with no fault to increase likelihood of merge)
+     * 
+     * We guarantee spatial isolation so the kernel cannot preemptively merge.
      * ===================================================================== */
     
-    /* 1. Allocate a completely separate source page (Unfaulted). add MAP_NAMED_SWAP to fail case  */
     printf("SCENARIO 4: Unfaulted Merge Attempt (The \"Cheat Code\")\n");
-    unsigned char *unfaulted_src = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
-                                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    
+    /* 1. Create a massive 10-page arena and unmap it so we control the exact addresses */
+    unsigned char *arena = mmap(NULL, 10 * page_size, PROT_NONE,
+                                MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    ASSERT(arena != MAP_FAILED);
+    munmap(arena, 10 * page_size);
+
+    /* 2. Map Source far away on the right (Page 8). Add (to fail) or remove (to success) MAP_NAMED_SWAP to inspect differene in behavior */
+    unsigned char *unfaulted_src = mmap(arena + 8 * page_size, page_size, 
+                                        PROT_READ | PROT_WRITE,
+                                        MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
     ASSERT(unfaulted_src != MAP_FAILED);
 
-    /* 2. Reserve a 2-page block for our destination to guarantee contiguous virtual space */
-    unsigned char *unfaulted_dest_area = mmap(NULL, 2 * page_size, PROT_NONE,
-                                              MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    ASSERT(unfaulted_dest_area != MAP_FAILED);
-    munmap(unfaulted_dest_area, 2 * page_size);
-
-    /* 3. Map the Right Anchor VMA at the second page of the destination (Unfaulted). add MAP_NAMED_SWAP to fail case */
-    unsigned char *unfaulted_right = mmap(unfaulted_dest_area + page_size, page_size, 
+    /* 3. Map Right Anchor near the left (Page 1). Add (to fail) or remove (to success) MAP_NAMED_SWAP to inspect differene in behavior  */
+    unsigned char *unfaulted_right = mmap(arena + 1 * page_size, page_size, 
                                           PROT_READ | PROT_WRITE,
-                                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+                                          MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
     ASSERT(unfaulted_right != MAP_FAILED);
+    
+    /* The destination is exactly to the left of the Right Anchor (Page 0) */
+    unsigned char *unfaulted_dest_area = arena;
 
+    /* Capture initial state */
+    struct vma_info_args orig_unfaulted_src = get_vma_info(unfaulted_src);
     struct vma_info_args orig_unfaulted_right = get_vma_info(unfaulted_right);
 
-    /* 4. Move the Source VMA directly to the left of the Right Anchor VMA */
-    res = mremap(unfaulted_src, page_size, page_size, MREMAP_MAYMOVE | MREMAP_FIXED, unfaulted_dest_area);
-    ASSERT_EQ(res, unfaulted_dest_area);
+    printf("  [Before Move]\n");
+    printf("  Source VMA  -> ptr: %p, start: %p\n", 
+           (void*)orig_unfaulted_src.vma_ptr, (void*)orig_unfaulted_src.vma_start);
+    printf("  Right VMA   -> ptr: %p, start: %p\n", 
+           (void*)orig_unfaulted_right.vma_ptr, (void*)orig_unfaulted_right.vma_start);
+
+    /* 4. Move Source directly to the left of the Right Anchor */
+    void *reso = mremap(unfaulted_src, page_size, page_size, MREMAP_MAYMOVE | MREMAP_FIXED, unfaulted_dest_area);
+    ASSERT_EQ(reso, unfaulted_dest_area);
 
     struct vma_info_args merged_c4 = get_vma_info(unfaulted_dest_area);
 
+    printf("  [After Move]\n");
+    printf("  Result VMA  -> ptr: %p, start: %p\n", 
+           (void*)merged_c4.vma_ptr, (void*)merged_c4.vma_start);
+
     /* 
-     * PROOF: If the kernel forged the offset (cheat code active), they merged!
-     * We assert that the Right VMA metadata pointer survived and expanded left.
+     * PROOF: The cheat code dynamically forged the offset and forced the merge!
      */
     ASSERT_EQ(merged_c4.vma_ptr, orig_unfaulted_right.vma_ptr);
     ASSERT_EQ(merged_c4.vma_start, orig_unfaulted_right.vma_start - page_size);
 
     /* Clean up */
-    munmap(base, 10 * page_size);
-    munmap(unfaulted_dest_area, 2 * page_size);
+    munmap(arena, 10 * page_size);
 }
 
 
