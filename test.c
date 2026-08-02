@@ -28,10 +28,10 @@
 //REGISTER_TEST(test_mremap_enlarge);
 //REGISTER_TEST(test_mremap_failure_shrink);
 //REGISTER_TEST(test_munmap_named_swap_deallocate);
-//REGISTER_TEST(test_mprotect_permissions);
+REGISTER_TEST(test_mprotect_permissions);
 //REGISTER_TEST(test_single_vma_growsdown);
 //REGISTER_TEST(test_mremap_left_enlarge_only_fails_deliberately);
-REGISTER_TEST(test_mremap_left_enlarge_only_evict_and_resume);
+//REGISTER_TEST(test_mremap_left_enlarge_only_evict_and_resume);
 
 loff_t named_swap_file_size(struct file *file);
 loff_t named_swap_file_blocks(struct file *file);
@@ -627,18 +627,22 @@ void test_mprotect_permissions(void) {
     addr[0] = 0xAA;
     addr[PAGE_SIZE] = 0xBB;
 
-    /* 2. Verify initial permissions from kernel (both should be writable) */
+    /* 2. Capture initial file state before any VMA splits */
+    struct swap_file_info file_before = get_swap_file_info(addr);
+    ASSERT(file_before.path[0] != '\0');
+
+    /* 3. Verify initial permissions from kernel (both should be writable) */
     struct page_prot_args prot_page1_before = get_page_prot(addr);
     struct page_prot_args prot_page2_before = get_page_prot(addr + PAGE_SIZE);
 
     ASSERT_EQ(prot_page1_before.is_writable, 1);
     ASSERT_EQ(prot_page2_before.is_writable, 1);
 
-    /* 3. Apply mprotect to the second page to make it read-only */
+    /* 4. Apply mprotect to the second page to make it read-only */
     int rc = mprotect(addr + PAGE_SIZE, PAGE_SIZE, PROT_READ);
     ASSERT_EQ(rc, 0);
 
-    /* 4. Verify new permissions from the kernel */
+    /* 5. Verify new permissions from the kernel */
     struct page_prot_args prot_page1_after = get_page_prot(addr);
     struct page_prot_args prot_page2_after = get_page_prot(addr + PAGE_SIZE);
 
@@ -647,14 +651,42 @@ void test_mprotect_permissions(void) {
     /* Second page should NO LONGER be writable */
     ASSERT_EQ(prot_page2_after.is_writable, 0);
 
-    /* 5. Validate the hardware/page-fault level actually triggers a segfault[cite: 5] */
-    ASSERT_SIGNAL(SIGSEGV) {
-        addr[PAGE_SIZE] = 0xCC; /* Attempting to write to read-only page */
-    }
+    /* 
+     * 6. Verify the underlying named_swap files after the split.
+     * We query both the left VMA and the right VMA to ensure they remain 
+     * tethered to the same backing file despite the metadata split.
+     */
+    struct swap_file_info file_after_page1 = get_swap_file_info(addr);
+    struct swap_file_info file_after_page2 = get_swap_file_info(addr + PAGE_SIZE);
+
+    /* Assert both VMAs point to the exact same file path */
+    ASSERT(strcmp(file_after_page1.path, file_after_page2.path) == 0);
+    
+    /* Assert the file size didn't randomly truncate or expand */
+    ASSERT_EQ(file_after_page1.file_size, file_before.file_size);
+    ASSERT_EQ(file_after_page2.file_size, file_before.file_size);
+
+    /* Assert logical offsets are strictly maintained */
+    ASSERT_EQ(file_after_page2.offset, file_after_page1.offset + PAGE_SIZE);
+
+    /* 
+     * 7. Verify memory contents are strictly intact. 
+     * Since the second page is PROT_READ, we can safely read it here without 
+     * triggering a segfault to prove the file mapping is unbroken.
+     */
+    ASSERT_EQ_AT(addr, 0xAA);
+    ASSERT_EQ_AT(addr + PAGE_SIZE, 0xBB);
 
     /* Ensure the first page is still physically writable */
     addr[0] = 0xDD;
     ASSERT_EQ_AT(addr, 0xDD);
+
+    sleep(3);
+
+    /* 8. Validate the hardware/page-fault level actually triggers a segfault on write */
+    ASSERT_SIGNAL(SIGSEGV) {
+        addr[PAGE_SIZE] = 0xCC; /* Attempting to write to read-only page */
+    }
 
     munmap(addr, len);
 }

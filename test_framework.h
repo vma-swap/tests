@@ -247,15 +247,16 @@ static inline void assert_neq_anon_vma_impl(
     __auto_type _assert_exp = (expected); \
     unsigned long long _assert_v = (unsigned long long)_assert_val; \
     unsigned long long _assert_e = (unsigned long long)_assert_exp; \
-    if (_assert_v != _assert_e) { \
-        fprintf(stderr, COLOR_RED "FAIL" COLOR_RESET \
-                " [%s:%d] *(%s) == %s\n" \
-                "  address: %p\n" \
-                "  read:    0x%llx\n" \
-                "  expect:  0x%llx\n", \
-                __FILE__, __LINE__, #p, #expected, \
-                (void *)_assert_p, _assert_v, _assert_e); \
-        fflush(stderr); \
+    int _failed = (_assert_v != _assert_e); \
+    fprintf(stderr, "%s [%s:%d] *(%s) == %s\n" \
+            "  address: %p\n" \
+            "  read:    0x%llx\n" \
+            "  expect:  0x%llx\n", \
+            _failed ? COLOR_RED "FAIL" COLOR_RESET : COLOR_GREEN "PASS" COLOR_RESET, \
+            __FILE__, __LINE__, #p, #expected, \
+            (void *)_assert_p, _assert_v, _assert_e); \
+    fflush(stderr); \
+    if (_failed) { \
         current_test_failed = 1; \
     } \
 } while (0)
