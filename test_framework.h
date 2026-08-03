@@ -217,9 +217,12 @@ static inline void assert_neq_anon_vma_impl(
                              #left_addr, #right_addr, __FILE__, __LINE__)
 
 #define ASSERT(expr) do { \
-    if (!(expr)) { \
-        fprintf(stderr, COLOR_RED "FAIL" COLOR_RESET " [%s:%d] %s\n", \
-                __FILE__, __LINE__, #expr); \
+    int _failed = !(expr); \
+    fprintf(stderr, "%s [%s:%d] %s\n", \
+            _failed ? COLOR_RED "FAIL" COLOR_RESET : COLOR_GREEN "PASS" COLOR_RESET, \
+            __FILE__, __LINE__, #expr); \
+    fflush(stderr); \
+    if (_failed) { \
         current_test_failed = 1; \
     } \
 } while (0)
