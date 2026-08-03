@@ -27,11 +27,11 @@
 //REGISTER_TEST(test_write_fault);
 //REGISTER_TEST(test_mremap_enlarge);
 //REGISTER_TEST(test_mremap_failure_shrink);
-REGISTER_TEST(test_munmap_named_swap_deallocate);
+//REGISTER_TEST(test_munmap_named_swap_deallocate);
 //REGISTER_TEST(test_mprotect_permissions);
 //REGISTER_TEST(test_single_vma_growsdown);
 //REGISTER_TEST(test_mremap_left_enlarge_only_fails_deliberately);
-//REGISTER_TEST(test_mremap_left_enlarge_only_evict_and_resume);
+REGISTER_TEST(test_mremap_left_enlarge_only_evict_and_resume);
 //REGISTER_TEST(test_simple_mremap_to_the_left_case);
 
 loff_t named_swap_file_size(struct file *file);
@@ -966,16 +966,26 @@ void test_mremap_left_enlarge_only_evict_and_resume(void) {
     ASSERT_EQ(res, scratch + 0);
     
     struct vma_info_args orig_right_c1 = get_vma_info(base + 1 * page_size);
+    struct swap_file_info file_orig_right_c1 = get_swap_file_info(base + 1 * page_size);
     
     /* Step 2: Return base[0] to its home. Neighbor is ONLY base[1] (Right). */
     res = mremap(scratch + 0, page_size, page_size, MREMAP_MAYMOVE | MREMAP_FIXED, base + 0);
     ASSERT_EQ(res, base + 0);
     
     struct vma_info_args merged_c1 = get_vma_info(base + 0);
+    struct swap_file_info file_merged_c1 = get_swap_file_info(base + 0);
     
     /* PROOF: The Right VMA metadata pointer survived, and its start boundary shifted left */
     ASSERT_EQ(merged_c1.vma_ptr, orig_right_c1.vma_ptr); 
     ASSERT_EQ(merged_c1.vma_start, orig_right_c1.vma_start - page_size); 
+
+    /* ---NAMED SWAP FILE VALIDATIONS --- */
+    /* PROOF: The underlying named_swap file is still the original right backing one */
+    ASSERT(strcmp(file_merged_c1.path, file_orig_right_c1.path) == 0);
+
+    /* Verify the file size increased by exactly one page size due to the leftward enlargement */
+    ASSERT_EQ(file_merged_c1.file_size, file_orig_right_c1.file_size + page_size);
+    /* ---------------------------- */
 
 
     /* =====================================================================
