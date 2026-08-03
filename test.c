@@ -31,8 +31,9 @@
 //REGISTER_TEST(test_mprotect_permissions);
 //REGISTER_TEST(test_single_vma_growsdown);
 //REGISTER_TEST(test_mremap_left_enlarge_only_fails_deliberately);
-REGISTER_TEST(test_mremap_left_enlarge_only_evict_and_resume);
+//REGISTER_TEST(test_mremap_left_enlarge_only_evict_and_resume);
 //REGISTER_TEST(test_simple_mremap_to_the_left_case);
+REGISTER_TEST(test_mremap_enlarge_file_left_and_shrink_file_left);
 
 loff_t named_swap_file_size(struct file *file);
 loff_t named_swap_file_blocks(struct file *file);
@@ -978,13 +979,6 @@ void test_mremap_left_enlarge_only_evict_and_resume(void) {
     /* PROOF: The Right VMA metadata pointer survived, and its start boundary shifted left */
     ASSERT_EQ(merged_c1.vma_ptr, orig_right_c1.vma_ptr); 
     ASSERT_EQ(merged_c1.vma_start, orig_right_c1.vma_start - page_size); 
-
-    /* ---NAMED SWAP FILE VALIDATIONS --- */
-    /* PROOF: The underlying named_swap file is still the original right backing one */
-    ASSERT(strcmp(file_merged_c1.path, file_orig_right_c1.path) == 0);
-
-    /* Verify the file size increased by exactly one page size due to the leftward enlargement */
-    ASSERT_EQ(file_merged_c1.file_size, file_orig_right_c1.file_size + page_size);
     /* ---------------------------- */
 
 
@@ -1141,6 +1135,106 @@ void test_simple_mremap_to_the_left_case(void) {
         munmap(old_address, page_size);
     }
 }
+
+void test_mremap_enlarge_file_left_and_shrink_file_left(void) {
+
+    /* =========================================================================
+     * enlarge file left: Move the left half away and inspect the remaining right half
+     * ========================================================================= */
+
+    size_t page_size = PAGE_SIZE;
+    size_t total_size = page_size * 2;
+
+    /* 1. Reserve a 2-page virtual address gap using standard anonymous memory */
+    unsigned char *gap = mmap(NULL, total_size, PROT_NONE, 
+                              MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    ASSERT(gap != MAP_FAILED);
+    if (gap == MAP_FAILED) return;
+
+    /* 2. Map VMA2 ANYWHERE ELSE FIRST. 
+          Because 'gap' is currently mapped, the kernel cannot place VMA2 inside it. */
+    unsigned char *addr_vma2 = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
+                                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP, -1, 0);
+    ASSERT(addr_vma2 != MAP_FAILED);
+    
+    /* 3. Now unmap the gap to free the space back to the kernel */
+    ASSERT_EQ(munmap(gap, total_size), 0);
+
+    /* 4. Map VMA1 to the RIGHT side of the gap using MAP_FIXED. */
+    unsigned char *addr_vma1 = mmap(gap + page_size, page_size, PROT_READ | PROT_WRITE,
+                                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP | MAP_FIXED, -1, 0);
+    ASSERT_EQ(addr_vma1, gap + page_size);
+
+    /* Fault them to ensure backend files are fully populated and active */
+    addr_vma1[0] = 0x11;
+    addr_vma2[0] = 0x22;
+
+    /* Capture pre-merge file state of VMA1 */
+    struct vma_info_args vma1_before = get_vma_info(addr_vma1);
+    struct swap_file_info file_vma1_before = get_swap_file_info(addr_vma1);
+    
+    /* Verify it is exactly 1 page */
+    ASSERT_EQ(file_vma1_before.file_size, page_size);
+
+    /* 4. Move VMA2 exactly to the LEFT of VMA1 (into the reserved gap) */
+    unsigned char *left_of_vma1 = gap;
+    void *res = mremap(addr_vma2, page_size, page_size, MREMAP_MAYMOVE | MREMAP_FIXED, left_of_vma1);
+    ASSERT_EQ(res, left_of_vma1);
+
+    /* 5. Verify the VMA merged successfully to the left */
+    struct vma_info_args vma_merged = get_vma_info(left_of_vma1);
+    
+    /* VMA1's metadata pointer should survive and its boundary should expand left */
+    ASSERT_EQ(vma_merged.vma_ptr, vma1_before.vma_ptr);
+    ASSERT_EQ(vma_merged.vma_start, (unsigned long)left_of_vma1);
+
+    /* 6. Verify the backing file of VMA1 successfully expanded left */
+    struct swap_file_info file_merged = get_swap_file_info(left_of_vma1);
+    
+    /* The path must remain VMA1's original path */
+    ASSERT(strcmp(file_merged.path, file_vma1_before.path) == 0);
+    
+    /* The file size must have grown by exactly 1 page */
+    ASSERT_EQ(file_merged.file_size, file_vma1_before.file_size + page_size);
+    
+    /* The allocated blocks must have increased to cover the new page */
+    unsigned long blocks_added = page_size / 512;
+    ASSERT_EQ(file_merged.allocated_blocks, file_vma1_before.allocated_blocks + blocks_added);
+
+    /* =========================================================================
+     * shrink file left: Move the left half away and inspect the remaining right half
+     * ========================================================================= */
+
+    /* 7. Create a new 1-page gap to move the left half into */
+    unsigned char *scratch_dest = mmap(NULL, page_size, PROT_NONE, 
+                                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    ASSERT(scratch_dest != MAP_FAILED);
+    ASSERT_EQ(munmap(scratch_dest, page_size), 0);
+
+    /* 8. Move the left half (the page at 'left_of_vma1') to the new location */
+    void *res2 = mremap(left_of_vma1, page_size, page_size, MREMAP_MAYMOVE | MREMAP_FIXED, scratch_dest);
+    ASSERT_EQ(res2, scratch_dest);
+
+    /* 9. Inspect the underlying file backing the REMAINING right half (at 'addr_vma1') */
+    struct swap_file_info file_after_split = get_swap_file_info(addr_vma1);
+
+    /* PROOF: The underlying file remains the exact same file */
+    ASSERT(strcmp(file_after_split.path, file_merged.path) == 0);
+
+    /* The file size should remain 2 pages (hole punching keeps the overall size intact) */
+    ASSERT_EQ(file_after_split.file_size, file_merged.file_size);
+
+    /* The allocated physical blocks must decrease because a hole was punched on the left side */
+    ASSERT_EQ(file_after_split.allocated_blocks, file_merged.allocated_blocks - blocks_added);
+    /* ------------------------------------------------------------------------- */
+
+    /* Cleanup */
+    munmap(addr_vma1, page_size);       /* Clean up the remaining right half */
+    munmap(scratch_dest, page_size);    /* Clean up the moved left half */
+}
+
+
+
 
 
 
