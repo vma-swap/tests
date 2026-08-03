@@ -33,7 +33,9 @@
 //REGISTER_TEST(test_mremap_left_enlarge_only_fails_deliberately);
 //REGISTER_TEST(test_mremap_left_enlarge_only_evict_and_resume);
 //REGISTER_TEST(test_simple_mremap_to_the_left_case);
-REGISTER_TEST(test_mremap_enlarge_file_left_and_shrink_file_left);
+//REGISTER_TEST(test_mremap_enlarge_file_left_and_shrink_file_left);
+REGISTER_TEST(test_mremap_shrink_from_right);
+//REGISTER_TEST(test_partial_munmap_shrink_file_right);
 
 loff_t named_swap_file_size(struct file *file);
 loff_t named_swap_file_blocks(struct file *file);
@@ -1231,6 +1233,77 @@ void test_mremap_enlarge_file_left_and_shrink_file_left(void) {
     /* Cleanup */
     munmap(addr_vma1, page_size);       /* Clean up the remaining right half */
     munmap(scratch_dest, page_size);    /* Clean up the moved left half */
+}
+
+void test_mremap_shrink_from_right(void) {
+    size_t page_size = PAGE_SIZE;
+    size_t initial_size = page_size * 2;
+    size_t shrunk_size = page_size;
+
+    /* 1. Map a 2-page VMA backed by a named swap file */
+    unsigned char *addr = mmap(NULL, initial_size, PROT_READ | PROT_WRITE,
+                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP, -1, 0);
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED) return;
+
+    /* 2. Fault both pages to ensure the backend file is fully populated and blocks are allocated */
+    addr[0] = 0x11;
+    addr[page_size] = 0x22;
+
+    /* 3. Verify initial file size is exactly 2 pages */
+    struct swap_file_info file_before = get_swap_file_info(addr);
+    ASSERT_EQ(file_before.file_size, initial_size);
+
+    /* 4. Shrink the VMA from the right using mremap (no MAYMOVE needed) */
+    void *res = mremap(addr, initial_size, shrunk_size, 0);
+    
+    /* Ensure the syscall succeeded and kept the same base address */
+    ASSERT(res != MAP_FAILED);
+    ASSERT_EQ(res, addr);
+
+    /* 5. Inspect the underlying file to verify VFS truncate occurred */
+    struct swap_file_info file_after = get_swap_file_info(addr);
+    
+    /* PROOF: If vfs_truncate was called, the overall file size will decrease. 
+              If named_swap_deallocate (hole punch) was called, the size would remain 2 pages. */
+    ASSERT_EQ(file_after.file_size, shrunk_size);
+
+    /* Cleanup the remaining 1-page VMA */
+    munmap(addr, shrunk_size);
+}
+
+void test_partial_munmap_shrink_file_right(void) {
+    size_t page_size = PAGE_SIZE;
+    size_t initial_size = page_size * 2;
+    size_t shrunk_size = page_size;
+
+    /* 1. Map a 2-page VMA backed by a named swap file */
+    unsigned char *addr = mmap(NULL, initial_size, PROT_READ | PROT_WRITE,
+                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP, -1, 0);
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED) return;
+
+    /* 2. Fault both pages to ensure the backend file is fully populated */
+    addr[0] = 0x11;
+    addr[page_size] = 0x22;
+
+    /* 3. Verify initial file size is exactly 2 pages */
+    struct swap_file_info file_before = get_swap_file_info(addr);
+    ASSERT_EQ(file_before.file_size, initial_size);
+
+    /* 4. Shrink the VMA from the right by unmapping the second page */
+    int rc = munmap(addr + page_size, page_size);
+    ASSERT_EQ(rc, 0);
+
+    /* 5. Inspect the underlying file of the remaining VMA to verify VFS truncate occurred */
+    struct swap_file_info file_after = get_swap_file_info(addr);
+    
+    /* PROOF: If vfs_truncate was called by the vma.c cleanup logic, the overall file size will decrease. 
+              If named_swap_deallocate (hole punch) was called, the size would remain 2 pages. */
+    ASSERT_EQ(file_after.file_size, shrunk_size);
+
+    /* 6. Cleanup the remaining 1-page VMA */
+    munmap(addr, shrunk_size);
 }
 
 
