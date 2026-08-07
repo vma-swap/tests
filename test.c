@@ -36,7 +36,8 @@
 //REGISTER_TEST(test_mremap_enlarge_file_left_and_shrink_file_left);
 //REGISTER_TEST(test_mremap_shrink_from_right);
 //REGISTER_TEST(test_partial_munmap_shrink_file_right);
-REGISTER_TEST(test_mmap_merge_enlarge_file_left);
+//REGISTER_TEST(test_mmap_merge_enlarge_file_left);
+REGISTER_TEST(test_partial_munmap_shrink_file_left);
 
 loff_t named_swap_file_size(struct file *file);
 loff_t named_swap_file_blocks(struct file *file);
@@ -1142,7 +1143,7 @@ void test_simple_mremap_to_the_left_case(void) {
 void test_mremap_enlarge_file_left_and_shrink_file_left(void) {
 
     /* =========================================================================
-     * enlarge file left: Move the left half away and inspect the remaining right half
+     * enlarge file left: Move the left half away and return it and inspect
      * ========================================================================= */
 
     size_t page_size = PAGE_SIZE;
@@ -1362,6 +1363,58 @@ void test_mmap_merge_enlarge_file_left(void) {
 
     /* Cleanup: Since they merged, one munmap cleans up the whole 2-page region */
     munmap(left_addr, page_size * 2);
+}
+
+void test_partial_munmap_shrink_file_left(void) {
+    size_t page_size = PAGE_SIZE;
+    size_t initial_size = page_size * 2;
+    size_t unmapped_size = page_size;
+
+    /* 1. Map a 2-page VMA backed by a named swap file */
+    unsigned char *addr = mmap(NULL, initial_size, PROT_READ | PROT_WRITE,
+                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP, -1, 0);
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED) return;
+
+    /* 2. Fault both pages to ensure the backend file is fully populated and blocks are allocated */
+    addr[0] = 0x11;
+    addr[page_size] = 0x22;
+
+    /* 3. Verify initial file size and capture the baseline allocated blocks */
+    struct swap_file_info file_before = get_swap_file_info(addr);
+    ASSERT_EQ(file_before.file_size, initial_size);
+    
+    unsigned long blocks_before = file_before.allocated_blocks;
+    ASSERT_ABOVE(blocks_before, 0);
+
+    /* 4. Shrink the VMA from the left by unmapping the first (leftmost) page */
+    int rc = munmap(addr, unmapped_size);
+    ASSERT_EQ(rc, 0);
+
+    /* 
+     * 5. Inspect the underlying file of the REMAINING VMA.
+     * Note: We must query 'addr + page_size' because 'addr' is now unmapped.
+     */
+    struct swap_file_info file_after = get_swap_file_info(addr + page_size);
+    
+    /* 
+     * PROOF: Hole punching (named_swap_deallocate) keeps the overall logical file size intact,
+     * so we expect the file_size to remain exactly as it was.
+     */
+    ASSERT_EQ(file_after.file_size, initial_size);
+    
+    /* 
+     * 6. Verify the physical allocated blocks decreased by exactly 1 page.
+     * The filesystem allocates blocks in 512-byte units, so 1 page (4096 bytes) = 8 blocks.
+     */
+    unsigned long blocks_freed = page_size / 512;
+    ASSERT_EQ(file_after.allocated_blocks, blocks_before - blocks_freed);
+
+    /* 7. Verify the data in the remaining right page is perfectly intact */
+    ASSERT_EQ_AT(addr + page_size, 0x22);
+
+    /* 8. Cleanup the remaining 1-page VMA */
+    munmap(addr + page_size, page_size);
 }
 
 
