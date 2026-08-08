@@ -37,7 +37,8 @@
 //REGISTER_TEST(test_mremap_shrink_from_right);
 //REGISTER_TEST(test_partial_munmap_shrink_file_right);
 //REGISTER_TEST(test_mmap_merge_enlarge_file_left);
-REGISTER_TEST(test_partial_munmap_shrink_file_left);
+//REGISTER_TEST(test_partial_munmap_shrink_file_left);
+REGISTER_TEST(test_mmap_merge_enlarge_file_right);
 
 loff_t named_swap_file_size(struct file *file);
 loff_t named_swap_file_blocks(struct file *file);
@@ -1415,6 +1416,64 @@ void test_partial_munmap_shrink_file_left(void) {
 
     /* 8. Cleanup the remaining 1-page VMA */
     munmap(addr + page_size, page_size);
+}
+
+void test_mmap_merge_enlarge_file_right(void) {
+    size_t page_size = PAGE_SIZE;
+
+    /* 1. Create a 2-page gap to reserve contiguous virtual memory */
+    unsigned char *gap = mmap(NULL, page_size * 2, PROT_NONE,
+                              MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    ASSERT(gap != MAP_FAILED);
+    
+    /* Unmap to free the virtual addresses back to the kernel */
+    ASSERT_EQ(munmap(gap, page_size * 2), 0);
+
+    /* 2. Map the LEFT VMA (Page 1) WITH MAP_NAMED_SWAP */
+    unsigned char *left_addr = mmap(gap, page_size, PROT_READ | PROT_WRITE,
+                                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP | MAP_FIXED, -1, 0);
+    ASSERT_EQ(left_addr, gap);
+    if (left_addr == MAP_FAILED) return;
+
+    /* Fault the page to trigger file creation and allocate blocks */
+    left_addr[0] = 0x11;
+
+    /* Capture the baseline file size of the left VMA (Expect 1 page) */
+    struct swap_file_info left_file_before = get_swap_file_info(left_addr);
+    ASSERT_EQ(left_file_before.file_size, page_size);
+    unsigned long blocks_before = left_file_before.allocated_blocks;
+
+    /* 3. Map the RIGHT VMA (Page 2) WITH MAP_NAMED_SWAP to trigger a positive merge */
+    /* Because of Early Neighbor Adoption, this will adopt the left VMA's file and calculate pgoff natively */
+    unsigned char *right_addr = mmap(gap + page_size, page_size, PROT_READ | PROT_WRITE,
+                                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP | MAP_FIXED, -1, 0);
+    ASSERT_EQ(right_addr, gap + page_size);
+    if (right_addr == MAP_FAILED) return;
+
+    /* Fault the right page */
+    right_addr[0] = 0x22;
+
+    /* 4. Inspect the file size by querying the address of our original left VMA */
+    struct swap_file_info merged_file = get_swap_file_info(left_addr);
+    
+    /* 
+     * PROOF: Because both VMAs have MAP_NAMED_SWAP and the vm_file/pgoff matched,
+     * the kernel merged them. The file size must have increased to cover both pages.
+     */
+    ASSERT_EQ(merged_file.file_size, page_size * 2); 
+    ASSERT_ABOVE(merged_file.allocated_blocks, blocks_before);
+
+    /* 5. Verify the VMA metadata successfully merged the boundaries */
+    struct vma_info_args vma_after = get_vma_info(left_addr);
+    ASSERT_EQ(vma_after.vma_start, (unsigned long)left_addr);
+    ASSERT_EQ(vma_after.vma_end, (unsigned long)right_addr + page_size);
+
+    /* 6. Verify data integrity across the merged VMA */
+    ASSERT_EQ_AT(left_addr, 0x11);
+    ASSERT_EQ_AT(right_addr, 0x22);
+
+    /* Cleanup: Since they merged, one munmap cleans up the whole 2-page region */
+    munmap(left_addr, page_size * 2);
 }
 
 
