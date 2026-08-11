@@ -23,6 +23,7 @@ REGISTER_TEST(test_swap_file_delete_exit);
 REGISTER_TEST(test_zero_file);
 REGISTER_TEST(test_read_first_fault);
 REGISTER_TEST(test_read_fork_write_fault);
+REGISTER_TEST(test_named_swap_fork_ra_file_isolation);
 REGISTER_TEST(test_write_fault);
 REGISTER_TEST(test_swapout_folio);
 REGISTER_TEST(test_named_swap_alias_count_pageout);
@@ -417,6 +418,140 @@ void test_read_first_fault(void) {
     struct swap_file_info swap_file_info = get_swap_file_info(addr);
     ASSERT_NEQ(swap_file_info.path, NULL);
     munmap(addr, PAGE_SIZE * MIN_PAGE_NAMED_SWAP_MMAP);
+}
+
+/*
+ * After fork+COW, neighboring PTEs can encode different named-swap files.
+ * Sequential read must RA from the faulting PTE's file; fault-around must
+ * not install a folio into a PTE that names a different file. Treat that as
+ * an RA "miss" for those PTEs (data + file index stay correct).
+ */
+void test_named_swap_fork_ra_file_isolation(void) {
+    const size_t nr_pages = MIN_PAGE_NAMED_SWAP_MMAP;
+    const size_t half = nr_pages / 2;
+    const size_t len = nr_pages * PAGE_SIZE;
+    int child_ready[2] = {-1, -1};
+    int parent_go[2] = {-1, -1};
+    int child_done[2] = {-1, -1};
+    pid_t pid;
+    int status = 0;
+    unsigned long parent_index = 0;
+    unsigned long child_index = 0;
+    unsigned long got_child_index = 0;
+    size_t i;
+    unsigned char *addr = mmap(NULL, len, PROT_READ | PROT_WRITE,
+                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP,
+                               -1, 0);
+
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED)
+        return;
+
+    for (i = 0; i < nr_pages; i++) {
+        unsigned char *p = addr + i * PAGE_SIZE;
+
+        p[0] = (unsigned char)(0x10 + (i & 0x2f));
+        ASSERT_EQ_AT(p, (unsigned char)(0x10 + (i & 0x2f)));
+    }
+    parent_index = assert_named_swap_file_for_addr(addr);
+    ASSERT_EQ(assert_named_swap_file_for_addr(addr + half * PAGE_SIZE),
+              parent_index);
+
+    ASSERT_EQ(pipe(child_ready), 0);
+    ASSERT_EQ(pipe(parent_go), 0);
+    ASSERT_EQ(pipe(child_done), 0);
+    if (child_ready[0] < 0 || parent_go[0] < 0 || child_done[0] < 0) {
+        munmap(addr, len);
+        return;
+    }
+
+    pid = fork();
+    ASSERT_NEQ(pid, -1);
+    if (pid < 0) {
+        close(child_ready[0]);
+        close(child_ready[1]);
+        close(parent_go[0]);
+        close(parent_go[1]);
+        close(child_done[0]);
+        close(child_done[1]);
+        munmap(addr, len);
+        return;
+    }
+
+    if (pid == 0) {
+        close(child_ready[0]);
+        close(parent_go[1]);
+        close(child_done[0]);
+
+        /* COW second half into a child-owned named-swap file. */
+        for (i = half; i < nr_pages; i++) {
+            unsigned char *p = addr + i * PAGE_SIZE;
+
+            p[0] = (unsigned char)(0x80 + (i & 0x2f));
+            ASSERT_EQ_AT(p, (unsigned char)(0x80 + (i & 0x2f)));
+        }
+        child_index = assert_named_swap_file_for_addr(addr + half * PAGE_SIZE);
+        ASSERT_NEQ(child_index, parent_index);
+        ASSERT_EQ(assert_named_swap_file_for_addr(addr), parent_index);
+
+        if (!current_test_failed)
+            ASSERT_EQ(write(child_ready[1], &child_index, sizeof(child_index)),
+                      (ssize_t)sizeof(child_index));
+        close(child_ready[1]);
+
+        ASSERT_EQ(wait_fd(parent_go[0]), 0);
+        close(parent_go[0]);
+
+        ASSERT_EQ(madvise(addr, len, MADV_PAGEOUT), 0);
+
+        /* Sequential read across both files' PTE ranges (triggers RA). */
+        for (i = 0; i < nr_pages; i++) {
+            unsigned char *p = addr + i * PAGE_SIZE;
+            unsigned char expect = (i < half)
+                    ? (unsigned char)(0x10 + (i & 0x2f))
+                    : (unsigned char)(0x80 + (i & 0x2f));
+            unsigned long expect_idx = (i < half) ? parent_index : child_index;
+
+            ASSERT_EQ_AT(p, expect);
+            ASSERT_EQ(assert_named_swap_file_for_addr(p), expect_idx);
+        }
+
+        if (!current_test_failed)
+            ASSERT_EQ(write(child_done[1], "d", 1), 1);
+        close(child_done[1]);
+        _exit(current_test_failed ? EXIT_FAILURE : EXIT_SUCCESS);
+    }
+
+    close(child_ready[1]);
+    close(parent_go[0]);
+    close(child_done[1]);
+
+    ASSERT_EQ(read(child_ready[0], &got_child_index, sizeof(got_child_index)),
+              (ssize_t)sizeof(got_child_index));
+    close(child_ready[0]);
+    ASSERT_NEQ(got_child_index, parent_index);
+
+    /* Parent keeps first-half ownership; page out before child refaults. */
+    ASSERT_EQ(madvise(addr, len, MADV_PAGEOUT), 0);
+    ASSERT_EQ(signal_fd(parent_go[1]), 0);
+    close(parent_go[1]);
+
+    ASSERT_EQ(wait_fd(child_done[0]), 0);
+    close(child_done[0]);
+
+    for (i = 0; i < half; i++) {
+        unsigned char *p = addr + i * PAGE_SIZE;
+
+        ASSERT_EQ_AT(p, (unsigned char)(0x10 + (i & 0x2f)));
+        ASSERT_EQ(assert_named_swap_file_for_addr(p), parent_index);
+    }
+
+    ASSERT_EQ(waitpid(pid, &status, 0), pid);
+    ASSERT(WIFEXITED(status));
+    if (WIFEXITED(status))
+        ASSERT_EQ(WEXITSTATUS(status), EXIT_SUCCESS);
+
+    munmap(addr, len);
 }
 
 void test_read_fork_write_fault(void) {
