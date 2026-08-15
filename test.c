@@ -36,9 +36,9 @@
 //REGISTER_TEST(test_mremap_enlarge_file_left_and_shrink_file_left);
 //REGISTER_TEST(test_mremap_shrink_from_right);
 //REGISTER_TEST(test_partial_munmap_shrink_file_right);
-//REGISTER_TEST(test_mmap_merge_enlarge_file_left);
+REGISTER_TEST(test_mmap_merge_enlarge_file_left);
 //REGISTER_TEST(test_partial_munmap_shrink_file_left);
-REGISTER_TEST(test_mmap_merge_enlarge_file_right);
+//REGISTER_TEST(test_mmap_merge_enlarge_file_right);
 
 loff_t named_swap_file_size(struct file *file);
 loff_t named_swap_file_blocks(struct file *file);
@@ -1333,6 +1333,13 @@ void test_mmap_merge_enlarge_file_left(void) {
     struct swap_file_info right_file_before = get_swap_file_info(right_addr);
     ASSERT_EQ(right_file_before.file_size, page_size);
     unsigned long blocks_before = right_file_before.allocated_blocks;
+
+    /* --- SYNCHRONIZATION BLOCK --- */
+    printf("Preparing to map LEFT VMA at address: %p\n", gap);
+    printf("--> PAUSED: Switch to host GDB, set your breakpoint, then press Enter here.\n");
+    fflush(stdout); 
+    getchar();
+    /* ----------------------------- */
 
     /* 3. Map the LEFT VMA (Page 1) WITH MAP_NAMED_SWAP to trigger a positive merge */
     unsigned char *left_addr = mmap(gap, page_size, PROT_READ | PROT_WRITE,
