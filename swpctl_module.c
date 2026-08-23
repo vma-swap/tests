@@ -30,6 +30,7 @@
 #define IOCTL_GET_PT_PAGE_FROM_ADDRESS _IOWR('s', 0x09, unsigned long)
 #define IOCTL_FOLIO_GET_MAPCOUNT _IOWR('s', 0x10, struct folio_get_mapcount_args)
 #define IOCTL_NAMED_SWAP_ALIAS_COUNT _IOWR('s', 0x11, struct named_swap_alias_count_args)
+#define IOCTL_GET_PAGE_PROT _IOR('s', 0x12, struct page_prot_args)
 
 struct folio_get_mapcount_args {
     void *virtual_address;
@@ -46,6 +47,14 @@ struct swap_file_info {
     char path[PATH_MAX];
     unsigned long offset;
     unsigned long size;
+    unsigned long file_size;   // NEW: Entire backing file size
+    unsigned long allocated_blocks; /* NEW: Extracted from i_blocks */
+};
+struct page_prot_args {
+    void *virtual_address;
+    unsigned int is_readable;
+    unsigned int is_writable;
+    unsigned int is_executable;
 };
 struct vma_info_args {
     void *virtual_address;
@@ -409,7 +418,7 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
             return -EFAULT;
         return 0;
     }
-    case IOCTL_GET_SWAP_FILE_PATH: {
+case IOCTL_GET_SWAP_FILE_PATH: {
         struct swap_file_info *args;
         char *path_buf;
         char *path;
@@ -417,6 +426,8 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
         struct folio *folio;
         struct anon_vma *anon_vma;
         struct file *named_swap_file;
+        struct mm_struct *mm = current->mm;
+        struct vm_area_struct* vma;
         int ret;
 
         args = kzalloc(sizeof(*args), GFP_KERNEL);
@@ -438,7 +449,7 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
         args->path[0] = '\0';
         args->offset = 0;
         args->size = 0;
-
+        /*
         ret = get_user_pages_fast((unsigned long)args->virtual_address, 1, 0, &page);
         if (ret != 1) {
             pr_err("swapctl: Failed to get page for user address %px (ret=%d)\n",
@@ -464,21 +475,60 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
             return -EINVAL;
         }
         named_swap_file = anon_vma->named_swap_file;
+        */
+
+        /* Safely lock the mm and look up the VMA directly */
+        mmap_read_lock(mm);
+        vma = vma_lookup(mm, (unsigned long)args->virtual_address);
+        
+        if (!vma || !vma->anon_vma || !vma->anon_vma->named_swap_file) {
+            mmap_read_unlock(mm);
+            kfree(path_buf);
+            kfree(args);
+            return -EINVAL; /* Not a valid named_swap VMA */
+        }
+
+        named_swap_file = vma->anon_vma->named_swap_file;
         if(named_swap_file) {
             path = named_swap_file_path(named_swap_file, path_buf, PATH_MAX);
             if (IS_ERR(path)) {
+                /*
                 put_anon_vma(anon_vma);
                 put_page(page);
+                */
+                mmap_read_unlock(mm);
                 kfree(path_buf);
                 kfree(args);
                 return PTR_ERR(path);
             }
             strscpy(args->path, path, sizeof(args->path));
-            args->offset = folio->index << PAGE_SHIFT;
-            args->size = folio_size(folio);
+
+            /* Calculate offset logically from the VMA instead of the folio index */
+
+            args->offset = ((unsigned long)args->virtual_address - vma->vm_start) + 
+                       (vma->vm_pgoff << PAGE_SHIFT);
+            args->size = PAGE_SIZE;
+
+            /*
+            //addition
+            vma = vma_lookup(mm, args->virtual_address);
+            if (!vma) {
+                return -EINVAL;
+            }
+            */
+
+            args->file_size = named_swap_file_size(named_swap_file); 
+
+            args->allocated_blocks = named_swap_file_blocks(named_swap_file);
         }
+
+        mmap_read_unlock(mm);
+
+        /*
         put_anon_vma(anon_vma);
         put_page(page);
+        */
+
         if (copy_to_user((void __user *)arg, args, sizeof(*args))) {
             kfree(path_buf);
             kfree(args);
@@ -564,6 +614,34 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 
         return 0;
     }
+
+    case IOCTL_GET_PAGE_PROT: {
+        struct page_prot_args args;
+        struct vm_area_struct *vma;
+
+        if (copy_from_user(&args, (void __user *)arg, sizeof(args)))
+            return -EFAULT;
+
+        mmap_read_lock(current->mm);
+        vma = vma_lookup(current->mm, (unsigned long)args.virtual_address);
+        if (!vma) {
+            mmap_read_unlock(current->mm);
+            return -EINVAL;
+        }
+
+        /* Extract the actual kernel permissions */
+        args.is_readable = !!(vma->vm_flags & VM_READ);
+        args.is_writable = !!(vma->vm_flags & VM_WRITE);
+        args.is_executable = !!(vma->vm_flags & VM_EXEC);
+        
+        mmap_read_unlock(current->mm);
+
+        if (copy_to_user((void __user *)arg, &args, sizeof(args)))
+            return -EFAULT;
+
+        return 0;
+    }
+
     default:
         return -EINVAL;
     }

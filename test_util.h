@@ -63,6 +63,15 @@ struct swap_file_info {
     char path[PATH_MAX];
     unsigned long offset;
     unsigned long size;
+    unsigned long file_size;   // NEW: Entire backing file size
+    unsigned long allocated_blocks; /* NEW: Extracted from i_blocks */
+};
+
+struct page_prot_args {
+    void *virtual_address;
+    unsigned int is_readable;
+    unsigned int is_writable;
+    unsigned int is_executable;
 };
 
 #define IOCTL_VMA_INFO _IOR('s', 0x02, struct vma_info_args)
@@ -75,6 +84,7 @@ struct swap_file_info {
 #define IOCTL_GET_PT_PAGE_FROM_ADDRESS _IOWR('s', 0x09, unsigned long)
 #define IOCTL_FOLIO_GET_MAPCOUNT _IOWR('s', 0x10, struct folio_get_mapcount_args)
 #define IOCTL_NAMED_SWAP_ALIAS_COUNT _IOWR('s', 0x11, struct named_swap_alias_count_args)
+#define IOCTL_GET_PAGE_PROT _IOR('s', 0x12, struct page_prot_args)
 struct folio_get_mapcount_args {
     void *virtual_address;
     unsigned long mapcount;
@@ -89,6 +99,7 @@ struct anon_vma_info_args get_anon_vma_info(void *addr);
 struct anon_vma_info_args get_anon_vma_info_from_vma(void *addr);
 unsigned int count_rmap_vmas(void *addr);
 struct swap_file_info get_swap_file_info(void *addr);
+struct page_prot_args get_page_prot(void *addr);
 struct folio_info_args get_folio_info(void *addr);
 unsigned short get_current_cgroup(void);
 unsigned long get_pte_value(void *addr);
@@ -100,6 +111,7 @@ int named_swap_get_root(char *buf, size_t size);
 int named_swap_set_root(const char *path);
 int signal_fd(int fd);
 int wait_fd(int fd);
+int check_vma_in_maps(unsigned char *expected_start, unsigned char *expected_end);
 
 pid_t start_ftrace(void);
 void stop_ftrace(char *test_name, pid_t pid);

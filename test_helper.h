@@ -2,6 +2,7 @@
 #define TEST_HELPER_H
 
 #include <stddef.h>
+#include <fcntl.h>
 
 #define PAGE_SIZE 4096
 #define MAP_NAMED_SWAP 0x200000
@@ -14,5 +15,7 @@ void dirty_pageout_mapping(unsigned char *addr, size_t len);
 unsigned long read_pageout_mapping(unsigned char *addr, size_t len);
 unsigned long expected_pageout_sum(size_t len);
 void assert_pageout_preserves_data(unsigned char *addr, size_t len);
+void write_sys_file(const char *path, const char *val);
+void print_usage(char *argv0);
 
 #endif
