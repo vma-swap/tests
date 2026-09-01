@@ -10,6 +10,7 @@
 #define DEVICE "/dev/swapctl"
 #define RMAP_WALK_MAX_VMAS 64
 #define NAMED_SWAP_SYSCTL "/proc/sys/vm/named_swap_root"
+#define NAMED_SWAP_FS_ROOT_SYSCTL "/proc/sys/vm/named_swap_fs_root"
 #define NAMED_SWAP_DEFAULT_ROOT "/.named_swap"
 
 struct vma_info_args {
@@ -98,6 +99,10 @@ int parse_named_swap_index(const char *path, unsigned long *index);
 void named_swap_path_for_index(char *path, size_t size, unsigned long index);
 int named_swap_get_root(char *buf, size_t size);
 int named_swap_set_root(const char *path);
+unsigned long named_swap_read_sysctl_ulong(const char *path);
+unsigned long named_swap_swap_usage(void);
+unsigned long named_swap_fs_usage(void);
+unsigned long named_swap_pool_usage(void);
 int signal_fd(int fd);
 int wait_fd(int fd);
 

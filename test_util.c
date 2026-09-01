@@ -158,18 +158,17 @@ unsigned int get_named_swap_alias_count(void *addr) {
     return args.count;
 }
 
-int named_swap_get_root(char *buf, size_t size) {
+static int named_swap_read_sysctl_str(const char *sysctl, char *buf, size_t size)
+{
     FILE *fp;
     size_t len;
 
     if (!buf || size == 0)
         return -1;
 
-    fp = fopen(NAMED_SWAP_SYSCTL, "r");
-    if (!fp) {
-        snprintf(buf, size, "%s", NAMED_SWAP_DEFAULT_ROOT);
-        return 0;
-    }
+    fp = fopen(sysctl, "r");
+    if (!fp)
+        return -1;
     if (!fgets(buf, size, fp)) {
         fclose(fp);
         return -1;
@@ -178,11 +177,77 @@ int named_swap_get_root(char *buf, size_t size) {
     len = strlen(buf);
     while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r'))
         buf[--len] = '\0';
-    if (len == 0) {
-        snprintf(buf, size, "%s", NAMED_SWAP_DEFAULT_ROOT);
+    return len ? 0 : -1;
+}
+
+int named_swap_get_root(char *buf, size_t size) {
+    if (named_swap_read_sysctl_str(NAMED_SWAP_SYSCTL, buf, size) == 0)
         return 0;
-    }
+    snprintf(buf, size, "%s", NAMED_SWAP_DEFAULT_ROOT);
     return 0;
+}
+
+static int named_swap_get_fs_root(char *buf, size_t size)
+{
+    if (named_swap_read_sysctl_str(NAMED_SWAP_FS_ROOT_SYSCTL, buf, size) == 0)
+        return 0;
+    snprintf(buf, size, "%s", NAMED_SWAP_DEFAULT_ROOT);
+    return 0;
+}
+
+static int named_swap_index_under_root(const char *path, const char *root,
+                                       unsigned long *index)
+{
+    size_t root_len;
+    const char *digits;
+    char *end;
+
+    if (!path || !root || !index)
+        return 0;
+    root_len = strlen(root);
+    if (!root_len || strncmp(path, root, root_len) != 0 || path[root_len] != '/')
+        return 0;
+
+    digits = path + root_len + 1;
+    if (*digits == '\0')
+        return 0;
+    for (const char *p = digits; *p; p++) {
+        if (!isdigit((unsigned char)*p))
+            return 0;
+    }
+
+    errno = 0;
+    *index = strtoul(digits, &end, 10);
+    return errno == 0 && *end == '\0';
+}
+
+unsigned long named_swap_read_sysctl_ulong(const char *path)
+{
+    FILE *fp;
+    unsigned long value = 0;
+
+    fp = fopen(path, "r");
+    if (!fp)
+        return 0;
+    if (fscanf(fp, "%lu", &value) != 1)
+        value = 0;
+    fclose(fp);
+    return value;
+}
+
+unsigned long named_swap_swap_usage(void)
+{
+    return named_swap_read_sysctl_ulong("/proc/sys/vm/named_swap_swap_usage");
+}
+
+unsigned long named_swap_fs_usage(void)
+{
+    return named_swap_read_sysctl_ulong("/proc/sys/vm/named_swap_fs_usage");
+}
+
+unsigned long named_swap_pool_usage(void)
+{
+    return named_swap_swap_usage() + named_swap_fs_usage();
 }
 
 int named_swap_set_root(const char *path) {
@@ -206,37 +271,34 @@ int named_swap_set_root(const char *path) {
 }
 
 int parse_named_swap_index(const char *path, unsigned long *index) {
-    char root[PATH_MAX];
-    size_t root_len;
-    const char *digits;
-    char *end;
+    char swap_root[PATH_MAX];
+    char fs_root[PATH_MAX];
 
-    if (named_swap_get_root(root, sizeof(root)) != 0)
-        return 0;
-    root_len = strlen(root);
-    if (strncmp(path, root, root_len) != 0 || path[root_len] != '/')
-        return 0;
-
-    digits = path + root_len + 1;
-    if (*digits == '\0')
-        return 0;
-
-    for (const char *p = digits; *p; p++) {
-        if (!isdigit((unsigned char)*p))
-            return 0;
-    }
-
-    errno = 0;
-    *index = strtoul(digits, &end, 10);
-    return errno == 0 && *end == '\0';
+    named_swap_get_root(swap_root, sizeof(swap_root));
+    named_swap_get_fs_root(fs_root, sizeof(fs_root));
+    if (named_swap_index_under_root(path, swap_root, index))
+        return 1;
+    if (named_swap_index_under_root(path, fs_root, index))
+        return 1;
+    return 0;
 }
 
 void named_swap_path_for_index(char *path, size_t size, unsigned long index) {
-    char root[PATH_MAX];
+    char swap_root[PATH_MAX];
+    char fs_root[PATH_MAX];
+    char swap_path[PATH_MAX];
+    char fs_path[PATH_MAX];
 
-    if (named_swap_get_root(root, sizeof(root)) != 0)
-        snprintf(root, sizeof(root), "%s", NAMED_SWAP_DEFAULT_ROOT);
-    snprintf(path, size, "%s/%lu", root, index);
+    named_swap_get_root(swap_root, sizeof(swap_root));
+    named_swap_get_fs_root(fs_root, sizeof(fs_root));
+    snprintf(swap_path, sizeof(swap_path), "%s/%lu", swap_root, index);
+    snprintf(fs_path, sizeof(fs_path), "%s/%lu", fs_root, index);
+    if (access(swap_path, F_OK) == 0)
+        snprintf(path, size, "%s", swap_path);
+    else if (access(fs_path, F_OK) == 0)
+        snprintf(path, size, "%s", fs_path);
+    else
+        snprintf(path, size, "%s/%lu", swap_root, index);
 }
 
 pid_t start_ftrace(void) {

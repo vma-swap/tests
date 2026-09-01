@@ -31,6 +31,8 @@ REGISTER_TEST(test_file_mmap_pageout_preserves_data);
 REGISTER_TEST(test_named_swap_pageout_preserves_data);
 REGISTER_TEST(test_memory_pressure_in_disk);
 REGISTER_TEST(test_memory_pressure);
+REGISTER_TEST(test_named_swap_usage_mmap_munmap);
+REGISTER_TEST(test_named_swap_usage_mremap_grow);
 /* Registered last so it runs first (list is prepended). */
 REGISTER_TEST(test_named_swap_root_config);
 
@@ -1134,4 +1136,85 @@ void test_mulcount_rmap_vmas_multi_fork(void) {
         exit(current_test_failed ? EXIT_FAILURE : EXIT_SUCCESS);
     }
 
+}
+
+static void assert_usage_charged_once(unsigned long before_swap,
+                                      unsigned long before_fs,
+                                      unsigned long after_swap,
+                                      unsigned long after_fs,
+                                      unsigned long pages)
+{
+    unsigned long dswap = after_swap - before_swap;
+    unsigned long dfs = after_fs - before_fs;
+
+    ASSERT(after_swap >= before_swap);
+    ASSERT(after_fs >= before_fs);
+    ASSERT_EQ(dswap + dfs, pages);
+    ASSERT((dswap == pages && dfs == 0) || (dswap == 0 && dfs == pages));
+}
+
+void test_named_swap_usage_mmap_munmap(void)
+{
+    const unsigned long pages = 4096;
+    const size_t len = pages * PAGE_SIZE;
+    unsigned long before_swap, before_fs, after_swap, after_fs;
+    unsigned long done_swap, done_fs;
+    char *addr;
+
+    before_swap = named_swap_swap_usage();
+    before_fs = named_swap_fs_usage();
+    addr = mmap(NULL, len, PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP, -1, 0);
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED)
+        return;
+    addr[0] = 1;
+    after_swap = named_swap_swap_usage();
+    after_fs = named_swap_fs_usage();
+    assert_usage_charged_once(before_swap, before_fs, after_swap, after_fs,
+                              pages);
+
+    ASSERT_EQ(munmap(addr, len), 0);
+    done_swap = named_swap_swap_usage();
+    done_fs = named_swap_fs_usage();
+    ASSERT_EQ(done_swap + done_fs, before_swap + before_fs);
+}
+
+void test_named_swap_usage_mremap_grow(void)
+{
+    const unsigned long pages = 1024;
+    const unsigned long grow = 1024;
+    const size_t len = pages * PAGE_SIZE;
+    const size_t new_len = (pages + grow) * PAGE_SIZE;
+    unsigned long before_swap, before_fs, mid_swap, mid_fs;
+    unsigned long after_swap, after_fs, done;
+    char *addr;
+    char *grown;
+
+    before_swap = named_swap_swap_usage();
+    before_fs = named_swap_fs_usage();
+    addr = mmap(NULL, len, PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP, -1, 0);
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED)
+        return;
+    addr[0] = 1;
+    mid_swap = named_swap_swap_usage();
+    mid_fs = named_swap_fs_usage();
+    assert_usage_charged_once(before_swap, before_fs, mid_swap, mid_fs, pages);
+
+    grown = mremap(addr, len, new_len, MREMAP_MAYMOVE);
+    ASSERT(grown != MAP_FAILED);
+    if (grown == MAP_FAILED) {
+        munmap(addr, len);
+        return;
+    }
+    grown[len] = 2;
+    after_swap = named_swap_swap_usage();
+    after_fs = named_swap_fs_usage();
+    assert_usage_charged_once(mid_swap, mid_fs, after_swap, after_fs, grow);
+
+    ASSERT_EQ(munmap(grown, new_len), 0);
+    done = named_swap_pool_usage();
+    ASSERT_EQ(done, before_swap + before_fs);
 }
