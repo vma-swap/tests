@@ -11,7 +11,9 @@
 #define RMAP_WALK_MAX_VMAS 64
 #define NAMED_SWAP_SYSCTL "/proc/sys/vm/named_swap_root"
 #define NAMED_SWAP_FS_ROOT_SYSCTL "/proc/sys/vm/named_swap_fs_root"
+#define NAMED_SWAP_MODE_SYSCTL "/proc/sys/vm/named_swap_mode"
 #define NAMED_SWAP_DEFAULT_ROOT "/.named_swap"
+#define NAMED_SWAP_DEFAULT_FS_ROOT "/.named_swap"
 
 struct vma_info_args {
     void *virtual_address;
@@ -58,7 +60,14 @@ struct folio_info_args {
     unsigned int is_file;
     unsigned int has_mapping;
     unsigned short memory_cgroup;
+    unsigned int lru_gen_type;
+    unsigned int dirty;
+    unsigned int writeback;
 };
+
+#define TEST_LRU_GEN_ANON  0
+#define TEST_LRU_GEN_FILE  1
+#define TEST_LRU_GEN_NAMED 2
 struct swap_file_info {
     void *virtual_address;
     char path[PATH_MAX];
@@ -86,6 +95,7 @@ struct page_prot_args {
 #define IOCTL_FOLIO_GET_MAPCOUNT _IOWR('s', 0x10, struct folio_get_mapcount_args)
 #define IOCTL_NAMED_SWAP_ALIAS_COUNT _IOWR('s', 0x11, struct named_swap_alias_count_args)
 #define IOCTL_GET_PAGE_PROT _IOR('s', 0x12, struct page_prot_args)
+#define IOCTL_GET_PTE_SWAP_FILE_PATH _IOWR('s', 0x13, struct swap_file_info)
 struct folio_get_mapcount_args {
     void *virtual_address;
     unsigned long mapcount;
@@ -100,6 +110,7 @@ struct anon_vma_info_args get_anon_vma_info(void *addr);
 struct anon_vma_info_args get_anon_vma_info_from_vma(void *addr);
 unsigned int count_rmap_vmas(void *addr);
 struct swap_file_info get_swap_file_info(void *addr);
+struct swap_file_info get_pte_swap_file_info(void *addr);
 struct page_prot_args get_page_prot(void *addr);
 struct folio_info_args get_folio_info(void *addr);
 unsigned short get_current_cgroup(void);
@@ -109,6 +120,7 @@ unsigned int get_named_swap_alias_count(void *addr);
 int parse_named_swap_index(const char *path, unsigned long *index);
 void named_swap_path_for_index(char *path, size_t size, unsigned long index);
 int named_swap_get_root(char *buf, size_t size);
+int named_swap_get_fs_root(char *buf, size_t size);
 int named_swap_set_root(const char *path);
 unsigned long named_swap_read_sysctl_ulong(const char *path);
 unsigned long named_swap_swap_usage(void);

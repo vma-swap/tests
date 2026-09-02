@@ -121,6 +121,20 @@ struct swap_file_info get_swap_file_info(void *addr) {
     return args;
 }
 
+struct swap_file_info get_pte_swap_file_info(void *addr) {
+    struct swap_file_info args = {0};
+    args.virtual_address = addr;
+
+    int fd = open_swapctl();
+    if (fd < 0)
+        return args;
+
+    if (ioctl(fd, IOCTL_GET_PTE_SWAP_FILE_PATH, &args) < 0)
+        perror("Failed to get PTE swap file info");
+    close(fd);
+    return args;
+}
+
 unsigned long get_pte_value(void *addr) {
     unsigned long value = (unsigned long)addr;
     int fd = open_swapctl();
@@ -187,7 +201,7 @@ int named_swap_get_root(char *buf, size_t size) {
     return 0;
 }
 
-static int named_swap_get_fs_root(char *buf, size_t size)
+int named_swap_get_fs_root(char *buf, size_t size)
 {
     if (named_swap_read_sysctl_str(NAMED_SWAP_FS_ROOT_SYSCTL, buf, size) == 0)
         return 0;

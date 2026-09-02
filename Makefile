@@ -36,6 +36,8 @@ kmod:
 		exit 1; \
 	fi
 	$(MAKE) -C $(KDIR) M=$(PWD) modules
+	@# Out-of-tree BTF often fails validation after a vmlinux rebuild.
+	@objcopy --remove-section=.BTF --remove-section=.BTF.ext $(MODULE) 2>/dev/null || true
 
 # Escape hatch for incomplete syzkaller build trees without Module.symvers.
 # Prefer fixing KDIR or building the kernel once so host builds are checked.
@@ -52,7 +54,7 @@ install_module:
 
 # Build the userspace test binary
 $(TEST_BIN): $(TEST_SRC) test_framework.h test_helper.h test_util.h
-	$(CC) $(CFLAGS) -o $@ $(TEST_SRC)
+	$(CC) $(CFLAGS) -static -pthread -o $@ $(TEST_SRC)
 
 $(BENCH_BIN): named_swap_cycle_bench.c test_helper.h
 	$(CC) $(CFLAGS) -o $@ named_swap_cycle_bench.c

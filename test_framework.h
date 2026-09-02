@@ -256,9 +256,10 @@ static inline void assert_neq_anon_vma_impl(
     } \
 } while (0)
 
-static inline unsigned long assert_named_swap_file_for_addr_impl(
-        void *addr, const char *addr_expr, const char *file, int line) {
-    struct swap_file_info swap_file_info = get_swap_file_info(addr);
+static inline unsigned long assert_named_swap_file_info_for_addr_impl(
+        void *addr, const char *addr_expr, const char *file, int line,
+        struct swap_file_info (*getter)(void *)) {
+    struct swap_file_info swap_file_info = getter(addr);
     unsigned long index = 0;
     char expected_path[PATH_MAX];
     char root[PATH_MAX];
@@ -299,7 +300,12 @@ static inline unsigned long assert_named_swap_file_for_addr_impl(
 }
 
 #define assert_named_swap_file_for_addr(addr) \
-    assert_named_swap_file_for_addr_impl((addr), #addr, __FILE__, __LINE__)
+    assert_named_swap_file_info_for_addr_impl((addr), #addr, __FILE__, __LINE__, \
+                                              get_swap_file_info)
+
+#define assert_named_swap_pte_file_for_addr(addr) \
+    assert_named_swap_file_info_for_addr_impl((addr), #addr, __FILE__, __LINE__, \
+                                              get_pte_swap_file_info)
 
 #define ASSERT_NEQ(a, b) do { \
     __auto_type _assert_a = (a); \

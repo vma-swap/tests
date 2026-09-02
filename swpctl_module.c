@@ -16,6 +16,7 @@
 #include <linux/limits.h>
 #include <linux/string.h>
 #include <linux/xarray.h>
+#include <linux/namei.h>
 
 #define DEVICE_NAME "swapctl"
 #define RMAP_WALK_MAX_VMAS 64
@@ -31,6 +32,7 @@
 #define IOCTL_FOLIO_GET_MAPCOUNT _IOWR('s', 0x10, struct folio_get_mapcount_args)
 #define IOCTL_NAMED_SWAP_ALIAS_COUNT _IOWR('s', 0x11, struct named_swap_alias_count_args)
 #define IOCTL_GET_PAGE_PROT _IOR('s', 0x12, struct page_prot_args)
+#define IOCTL_GET_PTE_SWAP_FILE_PATH _IOWR('s', 0x13, struct swap_file_info)
 
 struct folio_get_mapcount_args {
     void *virtual_address;
@@ -92,6 +94,9 @@ struct folio_info_args {
     unsigned int is_file;
     unsigned int has_mapping;
     unsigned short memory_cgroup;
+    unsigned int lru_gen_type;
+    unsigned int dirty;
+    unsigned int writeback;
 };
 
 enum swapctl_pte_state {
@@ -223,6 +228,114 @@ static int swapctl_get_pte_value(struct mm_struct *mm, unsigned long address,
 
     *pte_value = info.pte_value;
     return 0;
+}
+
+static int swapctl_fill_file_info(struct file *file, struct swap_file_info *args)
+{
+    char *path_buf;
+    char *path;
+
+    if (!file)
+        return -EINVAL;
+
+    path_buf = kmalloc(PATH_MAX, GFP_KERNEL);
+    if (!path_buf)
+        return -ENOMEM;
+
+    path = named_swap_file_path(file, path_buf, PATH_MAX);
+    if (IS_ERR(path)) {
+        kfree(path_buf);
+        return PTR_ERR(path);
+    }
+    strscpy(args->path, path, sizeof(args->path));
+    kfree(path_buf);
+
+    args->file_size = named_swap_file_size(file);
+    args->allocated_blocks = named_swap_file_blocks(file);
+    return 0;
+}
+
+static int swapctl_path_for_index(u64 index, char *buf, size_t size)
+{
+    const char *dirs[2] = { named_swap_root, named_swap_fs_root };
+    int i;
+
+    for (i = 0; i < 2; i++) {
+        char tmp[NAMED_SWAP_PATH_LEN + 32];
+        struct path path;
+        int n;
+
+        if (!dirs[i] || !dirs[i][0])
+            continue;
+        n = snprintf(tmp, sizeof(tmp), "%s/%llu", dirs[i], index);
+        if (n < 0 || n >= (int)sizeof(tmp))
+            continue;
+        if (kern_path(tmp, LOOKUP_FOLLOW, &path))
+            continue;
+        path_put(&path);
+        strscpy(buf, tmp, size);
+        return 0;
+    }
+    return -ENOENT;
+}
+
+/*
+ * File identity encoded in the PTE (present named-swap folio or
+ * SWP_NAMED_SWAP), which can differ from vma->anon_vma->named_swap_file
+ * after fork.
+ */
+static int swapctl_lookup_pte_named_swap_file(struct mm_struct *mm,
+                                              unsigned long address,
+                                              struct swap_file_info *args)
+{
+    struct swapctl_pte_info info;
+    struct vm_area_struct *vma;
+    int ret;
+
+    args->path[0] = '\0';
+    args->offset = 0;
+    args->size = 0;
+    args->file_size = 0;
+    args->allocated_blocks = 0;
+
+    vma = vma_lookup(mm, address);
+    if (!vma || address < vma->vm_start)
+        return -EINVAL;
+
+    args->offset = (address - vma->vm_start) + (vma->vm_pgoff << PAGE_SHIFT);
+    args->size = PAGE_SIZE;
+
+    ret = swapctl_get_pte_info(mm, address, &info);
+    if (ret)
+        return ret;
+
+    if (info.state == SWAPCTL_PTE_PRESENT) {
+        struct folio *folio;
+        struct address_space *mapping;
+        struct anon_vma *anon_vma;
+        struct file *file;
+
+        if (!pfn_valid(info.pfn))
+            return -EINVAL;
+        folio = pfn_folio(info.pfn);
+        if (!folio_test_named_swap(folio))
+            return -EINVAL;
+        mapping = folio_mapping(folio);
+        if (!mapping)
+            return -EINVAL;
+        anon_vma = READ_ONCE(mapping->anon_vma);
+        file = anon_vma ? READ_ONCE(anon_vma->named_swap_file) : NULL;
+        if (file)
+            return swapctl_fill_file_info(file, args);
+        return swapctl_path_for_index(named_swap_mapping_index(mapping),
+                                      args->path, sizeof(args->path));
+    }
+
+    if (info.state == SWAPCTL_PTE_NAMED_SWAP)
+        return swapctl_path_for_index(info.named_swap_index, args->path,
+                                      sizeof(args->path));
+
+    return -EINVAL;
 }
 
 static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
@@ -380,7 +493,8 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
         struct folio_info_args args;
         if (copy_from_user(&args, (void __user *)arg, sizeof(args)))
             return -EFAULT;
-         // Pin the user page
+         // Pin the user page. Read GUP so sampling dirty/writeback does not
+         // itself re-dirty the folio after reclaim.
 
         struct page *page = NULL;
         int ret = get_user_pages_fast((unsigned long)args.virtual_address, 1, 0, &page);
@@ -397,6 +511,9 @@ static long swapctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg
         args.is_anon = folio_test_anon(folio);
         args.is_file = folio_is_file_lru(folio);
         args.has_mapping = folio->mapping != NULL;
+        args.lru_gen_type = folio_lru_gen_type(folio);
+        args.dirty = folio_test_dirty(folio);
+        args.writeback = folio_test_writeback(folio);
         args.virtual_address = (void*)folio;
         struct mem_cgroup *memcg = folio_memcg(folio);
         if (memcg) {
@@ -480,15 +597,21 @@ case IOCTL_GET_SWAP_FILE_PATH: {
         /* Safely lock the mm and look up the VMA directly */
         mmap_read_lock(mm);
         vma = vma_lookup(mm, (unsigned long)args->virtual_address);
-        
-        if (!vma || !vma->anon_vma || !vma->anon_vma->named_swap_file) {
+
+        /*
+         * VMA-file ioctl: the current backing file is vma->vm_file.
+         * PROT_NONE maps have a file before the first fault (no anon_vma
+         * yet). After MADV_NO_NAMED_SWAP, the VMA is anonymous even if
+         * sibling VMAs still share anon_vma->named_swap_file.
+         */
+        if (!vma || !vma_is_named_swap(vma) || !vma->vm_file) {
             mmap_read_unlock(mm);
             kfree(path_buf);
             kfree(args);
             return -EINVAL; /* Not a valid named_swap VMA */
         }
 
-        named_swap_file = vma->anon_vma->named_swap_file;
+        named_swap_file = vma->vm_file;
         if(named_swap_file) {
             path = named_swap_file_path(named_swap_file, path_buf, PATH_MAX);
             if (IS_ERR(path)) {
@@ -639,6 +762,37 @@ case IOCTL_GET_SWAP_FILE_PATH: {
         if (copy_to_user((void __user *)arg, &args, sizeof(args)))
             return -EFAULT;
 
+        return 0;
+    }
+
+    case IOCTL_GET_PTE_SWAP_FILE_PATH: {
+        struct swap_file_info *args;
+        int ret;
+
+        args = kzalloc(sizeof(*args), GFP_KERNEL);
+        if (!args)
+            return -ENOMEM;
+
+        if (copy_from_user(args, (void __user *)arg, sizeof(*args))) {
+            kfree(args);
+            return -EFAULT;
+        }
+
+        mmap_read_lock(current->mm);
+        ret = swapctl_lookup_pte_named_swap_file(current->mm,
+                                                 (unsigned long)args->virtual_address,
+                                                 args);
+        mmap_read_unlock(current->mm);
+        if (ret) {
+            kfree(args);
+            return ret;
+        }
+
+        if (copy_to_user((void __user *)arg, args, sizeof(*args))) {
+            kfree(args);
+            return -EFAULT;
+        }
+        kfree(args);
         return 0;
     }
 
