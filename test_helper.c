@@ -34,3 +34,18 @@ void assert_pageout_preserves_data(unsigned char *addr, size_t len) {
     ASSERT_EQ(madvise(addr, len, MADV_PAGEOUT), 0);
     ASSERT_EQ(read_pageout_mapping(addr, len), expected);
 }
+
+/* Helper to write to debugfs/proc files */
+void write_sys_file(const char *path, const char *val) {
+    int fd = open(path, O_WRONLY);
+    if (fd >= 0) {
+        write(fd, val, strlen(val));
+        close(fd);
+    } else {
+        fprintf(stderr, "Failed to open %s\n", path);
+    }
+}
+
+void print_usage(char *argv0) {
+    printf("Usage: %s [--trace]\n", argv0);
+}
