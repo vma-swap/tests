@@ -35,6 +35,8 @@ REGISTER_TEST(test_partial_munmap_shrink_file_right);
 REGISTER_TEST(test_mmap_merge_enlarge_file_right);
 REGISTER_TEST(test_single_anon_vma);
 REGISTER_TEST(test_fork_anon_vma);
+REGISTER_TEST(test_knswap_daemon_async);
+REGISTER_TEST(test_knswap_daemon_sync);
 REGISTER_TEST(test_count_rmap_vmas);
 REGISTER_TEST(test_named_swap_growsdown_stack);
 REGISTER_TEST(test_named_swap_growsdown_shrink_back);
@@ -78,6 +80,7 @@ REGISTER_TEST(test_named_swap_convert_roundtrip);
 REGISTER_TEST(test_named_swap_convert_einval);
 REGISTER_TEST(test_named_swap_convert_subrange);
 REGISTER_TEST(test_named_swap_storage);
+REGISTER_TEST(test_named_swap_metadata_tracking);
 
 static int should_check_pressure_rmap(int offset) {
     int page = offset / PAGE_SIZE;
@@ -212,7 +215,6 @@ static int wait_dirty_drop(unsigned char *addr, size_t len, unsigned int start,
     }
     return (int)now;
 }
-
 static void dirty_pages(unsigned char *addr, size_t len)
 {
     size_t i;
@@ -309,7 +311,6 @@ static int read_lru_gen_totals(struct lru_gen_totals *out)
     fclose(fp);
     return 0;
 }
-
 void test_named_swap_flush_policy(void)
 {
     int saved = read_named_swap_flush();
@@ -3413,3 +3414,163 @@ void test_named_swap_usage_mremap_grow(void)
     done = named_swap_pool_usage();
     ASSERT_EQ(done, before_swap + before_fs);
 }
+void test_named_swap_metadata_tracking(void)
+{
+    const size_t page_size = PAGE_SIZE;
+    const size_t initial_pages = 4;
+    const size_t expanded_pages = 8;
+    const size_t initial_len = initial_pages * page_size;
+    const size_t expanded_len = expanded_pages * page_size;
+    unsigned char *addr;
+    unsigned char *new_addr;
+    struct swap_file_info info;
+    int rc;
+
+    addr = mmap(NULL, initial_len, PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP,
+                -1, 0);
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED)
+        return;
+
+    addr[0] = 0x11;
+    addr[page_size] = 0x22;
+    addr[2 * page_size] = 0x33;
+
+    info = get_swap_file_info(addr);
+    ASSERT_EQ(info.mapped_pages, 3);
+    ASSERT_EQ(info.file_size, initial_len);
+
+    new_addr = mremap(addr, initial_len, expanded_len, MREMAP_MAYMOVE);
+    ASSERT(new_addr != MAP_FAILED);
+    if (new_addr == MAP_FAILED) {
+        munmap(addr, initial_len);
+        return;
+    }
+
+    info = get_swap_file_info(new_addr);
+    ASSERT_EQ(info.mapped_pages, 3);
+    ASSERT_EQ(info.file_size, expanded_len);
+
+    rc = munmap(new_addr + page_size, page_size);
+    ASSERT_EQ(rc, 0);
+
+    info = get_swap_file_info(new_addr);
+    ASSERT_EQ(info.mapped_pages, 2);
+    ASSERT_EQ(info.file_size, expanded_len);
+
+    rc = madvise(new_addr, page_size, MADV_PAGEOUT);
+    ASSERT_EQ(rc, 0);
+
+    info = get_swap_file_info(new_addr);
+    ASSERT_EQ(info.mapped_pages, 1);
+    ASSERT_EQ(info.file_size, expanded_len);
+
+    rc = munmap(new_addr + 2 * page_size,
+                expanded_len - 2 * page_size);
+    ASSERT_EQ(rc, 0);
+
+    info = get_swap_file_info(new_addr);
+    ASSERT_EQ(info.mapped_pages, 0);
+    ASSERT_EQ(info.file_size, page_size);
+
+    munmap(new_addr, page_size);
+}
+void test_knswap_daemon_async(void)
+{
+    const size_t initial_pages = 256;
+    const size_t final_pages = 2048;
+    const size_t initial_len = initial_pages * PAGE_SIZE;
+    const size_t final_len = final_pages * PAGE_SIZE;
+    const unsigned long full_blocks =
+        final_pages * (PAGE_SIZE / 512);
+    unsigned char *addr;
+
+    addr = mmap(NULL, initial_len,
+                PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP,
+                -1, 0);
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED)
+        return;
+
+    addr[0] = 1;
+    addr[PAGE_SIZE] = 2;
+
+    addr = mremap(addr, initial_len, final_len, MREMAP_MAYMOVE);
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED)
+        return;
+
+    ASSERT(wait_for_allocated_blocks_drop(addr, full_blocks, 2000));
+
+    ASSERT_EQ(addr[0], 1);
+    ASSERT_EQ(addr[PAGE_SIZE], 2);
+
+    munmap(addr, final_len);
+}
+
+void test_knswap_daemon_sync(void)
+{
+    void *addrs[WASTE_CLEAN_EDGE_VMAS] = {0};
+    unsigned long before_blocks[WASTE_CLEAN_EDGE_VMAS] = {0};
+    unsigned long total_after = 0;
+    unsigned int cleaned_files = 0;
+    unsigned int mapped = 0;
+    unsigned int i;
+    long ret;
+
+    for (i = 0; i < WASTE_CLEAN_EDGE_VMAS; i++) {
+        size_t pages = WASTE_CLEAN_EDGE_VMAS - i;
+        size_t len = pages * PAGE_SIZE;
+
+        addrs[i] = mmap(NULL, len,
+                        PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP,
+                        -1, 0);
+        ASSERT(addrs[i] != MAP_FAILED);
+        if (addrs[i] == MAP_FAILED) {
+            addrs[i] = NULL;
+            goto out;
+        }
+
+        mapped++;
+        before_blocks[i] =
+            get_swap_file_info(addrs[i]).allocated_blocks;
+    }
+
+    /* Keep one live page in each backing file. */
+    for (i = 0; i < mapped; i++)
+        ((volatile unsigned char *)addrs[i])[0] =
+            (unsigned char)(i + 1);
+
+    ret = start_waste_clean_sync();
+    ASSERT_EQ(ret, 0);
+    if (ret)
+        goto out;
+
+    for (i = 0; i < mapped; i++) {
+        struct swap_file_info info;
+        unsigned char value;
+
+        info = get_swap_file_info(addrs[i]);
+        total_after += swap_file_waste_pages(&info);
+
+        if (info.allocated_blocks < before_blocks[i])
+            cleaned_files++;
+
+        value = ((volatile unsigned char *)addrs[i])[0];
+        ASSERT_EQ(value, (unsigned char)(i + 1));
+    }
+    ASSERT(total_after <= WASTE_CLEAN_THRESHOLD);
+    ASSERT(cleaned_files > 1);
+
+out:
+    for (i = 0; i < mapped; i++) {
+        size_t pages = WASTE_CLEAN_EDGE_VMAS - i;
+        size_t len = pages * PAGE_SIZE;
+
+        munmap(addrs[i], len);
+    }
+}
+
