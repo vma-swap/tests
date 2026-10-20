@@ -394,3 +394,33 @@ int check_vma_in_maps(unsigned char *expected_start, unsigned char *expected_end
     fclose(fp);
     return found;
 }
+int run_knswap_demon_test_loop(void **addrs, unsigned int count)
+{
+    struct knswap_test_run_args args = {0};
+    unsigned int i;
+    int fd;
+    int ret;
+
+    if (!addrs || !count || count > KNSWAP_TEST_MAX_VMAS) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    args.count = count;
+
+    for (i = 0; i < count; i++)
+        args.addresses[i] = (unsigned long)addrs[i];
+
+    fd = open_swapctl();
+    if (fd < 0)
+        return -1;
+
+    ret = ioctl(fd, IOCTL_KNSWAP_TEST_RUN_LOOP, &args);
+
+    if (ret < 0)
+        perror("IOCTL_KNSWAP_TEST_RUN_LOOP");
+
+    close(fd);
+
+    return ret;
+}

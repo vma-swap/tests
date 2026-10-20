@@ -17,6 +17,9 @@
 #include <linux/string.h>
 #include <linux/xarray.h>
 #include <linux/namei.h>
+extern long named_swap_get_nr_pages(struct file *file);
+extern int knswap_demon_run_loop(void);
+
 
 #define DEVICE_NAME "swapctl"
 #define RMAP_WALK_MAX_VMAS 64
@@ -33,6 +36,113 @@
 #define IOCTL_NAMED_SWAP_ALIAS_COUNT _IOWR('s', 0x11, struct named_swap_alias_count_args)
 #define IOCTL_GET_PAGE_PROT _IOR('s', 0x12, struct page_prot_args)
 #define IOCTL_GET_PTE_SWAP_FILE_PATH _IOWR('s', 0x13, struct swap_file_info)
+
+
+#define KNSWAP_TEST_MAX_VMAS 100
+
+struct knswap_test_run_args {
+    unsigned int count;
+    unsigned long addresses[KNSWAP_TEST_MAX_VMAS];
+};
+
+#define IOCTL_KNSWAP_TEST_RUN_LOOP _IOW('s', 0x14, struct knswap_test_run_args)
+
+struct knswap_test_saved_anon_vma {
+    struct anon_vma *anon_vma;
+    unsigned long old_active_vmas;
+};
+
+static long swapctl_knswap_test_run_loop(unsigned long arg)
+{
+    struct knswap_test_run_args args;
+    struct knswap_test_saved_anon_vma *saved;
+    unsigned int nr_saved = 0;
+    unsigned int i;
+    unsigned int j;
+    int ret = 0;
+
+    if (copy_from_user(&args, (void __user *)arg, sizeof(args)))
+        return -EFAULT;
+
+    if (!args.count || args.count > KNSWAP_TEST_MAX_VMAS)
+        return -EINVAL;
+
+    saved = kcalloc(args.count, sizeof(*saved), GFP_KERNEL);
+    if (!saved)
+        return -ENOMEM;
+
+    mmap_read_lock(current->mm);
+
+    for (i = 0; i < args.count; i++) {
+        struct vm_area_struct *vma;
+        struct anon_vma *anon_vma;
+
+        vma = vma_lookup(current->mm, args.addresses[i]);
+        if (!vma ||
+            !vma_is_named_swap(vma) ||
+            !vma->vm_file ||
+            !vma->anon_vma) {
+            ret = -EINVAL;
+            goto out_unlock;
+        }
+
+        anon_vma = vma->anon_vma;
+
+        for (j = 0; j < nr_saved; j++) {
+            if (saved[j].anon_vma == anon_vma)
+                break;
+        }
+
+        if (j < nr_saved)
+            continue;
+
+        get_anon_vma(anon_vma);
+
+        saved[nr_saved].anon_vma = anon_vma;
+        nr_saved++;
+    }
+
+out_unlock:
+    mmap_read_unlock(current->mm);
+
+    if (ret)
+        goto out_put;
+
+    for (i = 0; i < nr_saved; i++) {
+        struct anon_vma *anon_vma = saved[i].anon_vma;
+
+        anon_vma_lock_write(anon_vma);
+
+        saved[i].old_active_vmas = anon_vma->num_active_vmas;
+        anon_vma->num_active_vmas = 0;
+
+        anon_vma_unlock_write(anon_vma);
+    }
+
+    pr_info("swapctl: forcing %u anon_vmas inactive for knswap test\n",
+            nr_saved);
+
+    ret = knswap_demon_run_loop();
+
+    for (i = 0; i < nr_saved; i++) {
+        struct anon_vma *anon_vma = saved[i].anon_vma;
+
+        anon_vma_lock_write(anon_vma);
+
+        anon_vma->num_active_vmas =
+            saved[i].old_active_vmas;
+
+        anon_vma_unlock_write(anon_vma);
+    }
+
+out_put:
+    for (i = 0; i < nr_saved; i++)
+        put_anon_vma(saved[i].anon_vma);
+
+    kfree(saved);
+
+    return ret;
+}
 
 struct folio_get_mapcount_args {
     void *virtual_address;
@@ -51,6 +161,7 @@ struct swap_file_info {
     unsigned long size;
     unsigned long file_size;   // NEW: Entire backing file size
     unsigned long allocated_blocks; /* NEW: Extracted from i_blocks */
+    unsigned long mapped_pages;
 };
 struct page_prot_args {
     void *virtual_address;
@@ -252,6 +363,7 @@ static int swapctl_fill_file_info(struct file *file, struct swap_file_info *args
 
     args->file_size = named_swap_file_size(file);
     args->allocated_blocks = named_swap_file_blocks(file);
+    args->mapped_pages = named_swap_get_nr_pages(file);
     return 0;
 }
 
@@ -297,6 +409,7 @@ static int swapctl_lookup_pte_named_swap_file(struct mm_struct *mm,
     args->size = 0;
     args->file_size = 0;
     args->allocated_blocks = 0;
+    args->mapped_pages = 0;
 
     vma = vma_lookup(mm, address);
     if (!vma || address < vma->vm_start)
@@ -643,6 +756,7 @@ case IOCTL_GET_SWAP_FILE_PATH: {
             args->file_size = named_swap_file_size(named_swap_file); 
 
             args->allocated_blocks = named_swap_file_blocks(named_swap_file);
+            args->mapped_pages = named_swap_get_nr_pages(named_swap_file);
         }
 
         mmap_read_unlock(mm);
@@ -795,6 +909,8 @@ case IOCTL_GET_SWAP_FILE_PATH: {
         kfree(args);
         return 0;
     }
+    case IOCTL_KNSWAP_TEST_RUN_LOOP:
+        return swapctl_knswap_test_run_loop(arg);
 
     default:
         return -EINVAL;

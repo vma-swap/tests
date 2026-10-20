@@ -75,6 +75,7 @@ struct swap_file_info {
     unsigned long size;
     unsigned long file_size;   // NEW: Entire backing file size
     unsigned long allocated_blocks; /* NEW: Extracted from i_blocks */
+    unsigned long mapped_pages;
 };
 
 struct page_prot_args {
@@ -96,6 +97,16 @@ struct page_prot_args {
 #define IOCTL_NAMED_SWAP_ALIAS_COUNT _IOWR('s', 0x11, struct named_swap_alias_count_args)
 #define IOCTL_GET_PAGE_PROT _IOR('s', 0x12, struct page_prot_args)
 #define IOCTL_GET_PTE_SWAP_FILE_PATH _IOWR('s', 0x13, struct swap_file_info)
+
+#define KNSWAP_TEST_MAX_VMAS 100
+
+struct knswap_test_run_args {
+    unsigned int count;
+    unsigned long addresses[KNSWAP_TEST_MAX_VMAS];
+};
+
+#define IOCTL_KNSWAP_TEST_RUN_LOOP _IOW('s', 0x14, struct knswap_test_run_args)
+
 struct folio_get_mapcount_args {
     void *virtual_address;
     unsigned long mapcount;
@@ -129,6 +140,7 @@ unsigned long named_swap_pool_usage(void);
 int signal_fd(int fd);
 int wait_fd(int fd);
 int check_vma_in_maps(unsigned char *expected_start, unsigned char *expected_end);
+int run_knswap_demon_test_loop(void **addrs, unsigned int count);
 
 pid_t start_ftrace(void);
 void stop_ftrace(char *test_name, pid_t pid);
