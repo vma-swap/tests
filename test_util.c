@@ -394,3 +394,8 @@ int check_vma_in_maps(unsigned char *expected_start, unsigned char *expected_end
     fclose(fp);
     return found;
 }
+
+long start_waste_clean_sync(void)
+{
+    return syscall(START_WASTE_CLEAN_SYSCALL);
+}

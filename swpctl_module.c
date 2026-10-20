@@ -18,6 +18,9 @@
 #include <linux/xarray.h>
 #include <linux/namei.h>
 
+
+
+
 #define DEVICE_NAME "swapctl"
 #define RMAP_WALK_MAX_VMAS 64
 #define IOCTL_GET_SWAP_OFFSET_FROM_PAGE _IOR('s', 0x01, unsigned long)
@@ -33,6 +36,10 @@
 #define IOCTL_NAMED_SWAP_ALIAS_COUNT _IOWR('s', 0x11, struct named_swap_alias_count_args)
 #define IOCTL_GET_PAGE_PROT _IOR('s', 0x12, struct page_prot_args)
 #define IOCTL_GET_PTE_SWAP_FILE_PATH _IOWR('s', 0x13, struct swap_file_info)
+
+
+
+
 
 struct folio_get_mapcount_args {
     void *virtual_address;
@@ -51,6 +58,7 @@ struct swap_file_info {
     unsigned long size;
     unsigned long file_size;   // NEW: Entire backing file size
     unsigned long allocated_blocks; /* NEW: Extracted from i_blocks */
+    unsigned long mapped_pages;
 };
 struct page_prot_args {
     void *virtual_address;
@@ -115,6 +123,8 @@ struct swapctl_pte_info {
     unsigned long swp_offset;
     unsigned long named_swap_index;
 };
+
+extern long named_swap_get_nr_pages(struct file *file);
 
 static bool swapctl_rmap_one(struct folio *folio, struct vm_area_struct *vma,
                              unsigned long addr, void *arg)
@@ -252,6 +262,7 @@ static int swapctl_fill_file_info(struct file *file, struct swap_file_info *args
 
     args->file_size = named_swap_file_size(file);
     args->allocated_blocks = named_swap_file_blocks(file);
+    args->mapped_pages = named_swap_get_nr_pages(file);
     return 0;
 }
 
@@ -297,6 +308,7 @@ static int swapctl_lookup_pte_named_swap_file(struct mm_struct *mm,
     args->size = 0;
     args->file_size = 0;
     args->allocated_blocks = 0;
+    args->mapped_pages = 0;
 
     vma = vma_lookup(mm, address);
     if (!vma || address < vma->vm_start)
@@ -643,6 +655,7 @@ case IOCTL_GET_SWAP_FILE_PATH: {
             args->file_size = named_swap_file_size(named_swap_file); 
 
             args->allocated_blocks = named_swap_file_blocks(named_swap_file);
+            args->mapped_pages = named_swap_get_nr_pages(named_swap_file);
         }
 
         mmap_read_unlock(mm);
@@ -795,6 +808,7 @@ case IOCTL_GET_SWAP_FILE_PATH: {
         kfree(args);
         return 0;
     }
+
 
     default:
         return -EINVAL;
