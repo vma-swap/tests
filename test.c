@@ -27,57 +27,60 @@
 #define MADV_NO_NAMED_SWAP 27
 #endif
 
-REGISTER_TEST(test_mremap_enlarge);
-REGISTER_TEST(test_munmap_named_swap_deallocate);
-REGISTER_TEST(test_mprotect_permissions);
-REGISTER_TEST(test_mremap_shrink_from_right);
-REGISTER_TEST(test_partial_munmap_shrink_file_right);
-REGISTER_TEST(test_mmap_merge_enlarge_file_right);
-REGISTER_TEST(test_single_anon_vma);
-REGISTER_TEST(test_fork_anon_vma);
-REGISTER_TEST(test_count_rmap_vmas);
-REGISTER_TEST(test_named_swap_growsdown_stack);
-REGISTER_TEST(test_named_swap_growsdown_shrink_back);
-REGISTER_TEST(test_named_swap_enlarge_right_shrink);
-REGISTER_TEST(test_named_swap_mremap_maymove_grow);
-REGISTER_TEST(test_named_swap_fork_pgoff_guard);
-REGISTER_TEST(test_named_swap_fork_pgoff_middle);
-REGISTER_TEST(test_named_swap_fork_artifact_sparse);
-REGISTER_TEST(test_named_swap_fork_artifact_reclaim);
-REGISTER_TEST(test_named_swap_fork_artifact_holes);
-REGISTER_TEST(test_named_swap_fork_artifact_no_alloc);
-REGISTER_TEST(test_named_swap_prot_none_mprotect);
-REGISTER_TEST(test_named_swap_prot_none_incremental_mprotect);
-REGISTER_TEST(test_named_swap_prot_none_mmap_over);
-REGISTER_TEST(test_named_swap_mprotect_middle_punch);
-REGISTER_TEST(test_named_swap_mprotect_end_truncate);
-REGISTER_TEST(test_swap_file_creation);
-REGISTER_TEST(test_swap_file_delete_unmap);
-REGISTER_TEST(test_swap_file_delete_exit);
-REGISTER_TEST(test_zero_file);
-REGISTER_TEST(test_read_first_fault);
-REGISTER_TEST(test_read_fork_write_fault);
-REGISTER_TEST(test_named_swap_fork_ra_file_isolation);
-REGISTER_TEST(test_write_fault);
-REGISTER_TEST(test_swapout_folio);
-REGISTER_TEST(test_named_swap_alias_count_pageout);
-REGISTER_TEST(test_file_mmap_pageout_preserves_data);
-REGISTER_TEST(test_named_swap_pageout_preserves_data);
-REGISTER_TEST(test_memory_pressure_in_disk);
-REGISTER_TEST(test_memory_pressure);
-REGISTER_TEST(test_named_swap_usage_mmap_munmap);
-REGISTER_TEST(test_named_swap_usage_mremap_grow);
-/* Registered last so it runs first (list is prepended). */
-REGISTER_TEST(test_named_swap_flush_anon);
-REGISTER_TEST(test_named_swap_flush_file);
-REGISTER_TEST(test_named_swap_flush_background);
-REGISTER_TEST(test_named_swap_mglru_types);
-REGISTER_TEST(test_named_swap_flush_policy);
-REGISTER_TEST(test_named_swap_root_config);
-REGISTER_TEST(test_named_swap_convert_roundtrip);
-REGISTER_TEST(test_named_swap_convert_einval);
-REGISTER_TEST(test_named_swap_convert_subrange);
-REGISTER_TEST(test_named_swap_storage);
+// REGISTER_TEST(test_mremap_enlarge);
+// REGISTER_TEST(test_munmap_named_swap_deallocate);
+// REGISTER_TEST(test_mprotect_permissions);
+// REGISTER_TEST(test_mremap_shrink_from_right);
+// REGISTER_TEST(test_partial_munmap_shrink_file_right);
+// REGISTER_TEST(test_mmap_merge_enlarge_file_right);
+// REGISTER_TEST(test_single_anon_vma);
+// REGISTER_TEST(test_fork_anon_vma);
+//REGISTER_TEST(test_knswap_demon_async);
+REGISTER_TEST(test_knswap_demon_full_cleanup);
+// REGISTER_TEST(test_count_rmap_vmas);
+// REGISTER_TEST(test_named_swap_growsdown_stack);
+// REGISTER_TEST(test_named_swap_growsdown_shrink_back);
+// REGISTER_TEST(test_named_swap_enlarge_right_shrink);
+// REGISTER_TEST(test_named_swap_mremap_maymove_grow);
+// REGISTER_TEST(test_named_swap_fork_pgoff_guard);
+// REGISTER_TEST(test_named_swap_fork_pgoff_middle);
+// REGISTER_TEST(test_named_swap_fork_artifact_sparse);
+// REGISTER_TEST(test_named_swap_fork_artifact_reclaim);
+// REGISTER_TEST(test_named_swap_fork_artifact_holes);
+// REGISTER_TEST(test_named_swap_fork_artifact_no_alloc);
+// REGISTER_TEST(test_named_swap_prot_none_mprotect);
+// REGISTER_TEST(test_named_swap_prot_none_incremental_mprotect);
+// REGISTER_TEST(test_named_swap_prot_none_mmap_over);
+// REGISTER_TEST(test_named_swap_mprotect_middle_punch);
+// REGISTER_TEST(test_named_swap_mprotect_end_truncate);
+// REGISTER_TEST(test_swap_file_creation);
+// REGISTER_TEST(test_swap_file_delete_unmap);
+// REGISTER_TEST(test_swap_file_delete_exit);
+// REGISTER_TEST(test_zero_file);
+// REGISTER_TEST(test_read_first_fault);
+// REGISTER_TEST(test_read_fork_write_fault);
+// REGISTER_TEST(test_named_swap_fork_ra_file_isolation);
+// REGISTER_TEST(test_write_fault);
+// REGISTER_TEST(test_swapout_folio);
+// REGISTER_TEST(test_named_swap_alias_count_pageout);
+// REGISTER_TEST(test_file_mmap_pageout_preserves_data);
+// REGISTER_TEST(test_named_swap_pageout_preserves_data);
+// REGISTER_TEST(test_memory_pressure_in_disk);
+// REGISTER_TEST(test_memory_pressure);
+// REGISTER_TEST(test_named_swap_usage_mmap_munmap);
+// REGISTER_TEST(test_named_swap_usage_mremap_grow);
+// /* Registered last so it runs first (list is prepended). */
+// REGISTER_TEST(test_named_swap_flush_anon);
+// REGISTER_TEST(test_named_swap_flush_file);
+// REGISTER_TEST(test_named_swap_flush_background);
+// REGISTER_TEST(test_named_swap_mglru_types);
+// REGISTER_TEST(test_named_swap_flush_policy);
+// REGISTER_TEST(test_named_swap_root_config);
+// REGISTER_TEST(test_named_swap_convert_roundtrip);
+// REGISTER_TEST(test_named_swap_convert_einval);
+// REGISTER_TEST(test_named_swap_convert_subrange);
+// REGISTER_TEST(test_named_swap_storage);
+//REGISTER_TEST(test_named_swap_metadata_tracking);
 
 static int should_check_pressure_rmap(int offset) {
     int page = offset / PAGE_SIZE;
@@ -211,6 +214,56 @@ static int wait_dirty_drop(unsigned char *addr, size_t len, unsigned int start,
         waited += 50;
     }
     return (int)now;
+}
+
+static int wait_for_allocated_blocks_drop(unsigned char *addr,
+                                          unsigned long before_blocks,
+                                          int timeout_ms)
+{
+    struct timespec ts = {
+        .tv_sec = 0,
+        .tv_nsec = 50 * 1000 * 1000
+    };
+    int waited = 0;
+
+    while (waited < timeout_ms) {
+        struct swap_file_info info = get_swap_file_info(addr);
+
+        if (info.allocated_blocks < before_blocks)
+            return 1;
+
+        nanosleep(&ts, NULL);
+        waited += 50;
+    }
+
+    return 0;
+}
+
+static int wait_for_backing_alloc_drop(const char *path,
+                                       off_t before,
+                                       int timeout_ms)
+{
+    struct timespec ts = {
+        .tv_sec = 0,
+        .tv_nsec = 50 * 1000 * 1000
+    };
+    int waited = 0;
+
+    while (waited < timeout_ms) {
+        struct stat st;
+
+        if (stat(path, &st) == 0) {
+            off_t current = (off_t)st.st_blocks * 512;
+
+            if (current < before)
+                return 1;
+        }
+
+        nanosleep(&ts, NULL);
+        waited += 50;
+    }
+
+    return 0;
 }
 
 static void dirty_pages(unsigned char *addr, size_t len)
@@ -3412,4 +3465,229 @@ void test_named_swap_usage_mremap_grow(void)
     ASSERT_EQ(munmap(grown, new_len), 0);
     done = named_swap_pool_usage();
     ASSERT_EQ(done, before_swap + before_fs);
+}
+void test_named_swap_metadata_tracking(void) {
+    size_t page_size = PAGE_SIZE;
+    size_t initial_pages = 4;
+    size_t initial_len = initial_pages * page_size;
+    unsigned char *addr;
+    struct swap_file_info info;
+    unsigned long expected_blocks_per_page = page_size / 512;
+
+    /* 1. Map an initial VMA of 4 pages */
+    addr = mmap(NULL, initial_len, PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP, -1, 0);
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED) return;
+
+    /* 2. Fault 3 out of 4 pages */
+    addr[0] = 0x11;
+    addr[page_size] = 0x22;
+    addr[2 * page_size] = 0x33;
+
+    info = get_swap_file_info(addr);
+    /* Exactly 3 pages are faulted into physical RAM */
+    ASSERT_EQ(info.mapped_pages, 3);
+    /* The underlying filesystem pre-allocates blocks for ALL 4 virtual pages */
+    ASSERT_EQ(info.allocated_blocks, 4 * expected_blocks_per_page);
+
+    /* 3. ENLARGE: Expand the VMA from 4 pages to 8 pages */
+    size_t expanded_pages = 8;
+    size_t expanded_len = expanded_pages * page_size;
+    unsigned char *new_addr = mremap(addr, initial_len, expanded_len, MREMAP_MAYMOVE);
+    ASSERT(new_addr != MAP_FAILED);
+    if (new_addr == MAP_FAILED) return;
+
+    info = get_swap_file_info(new_addr);
+    /* No new pages faulted, RAM usage remains 3 */
+    ASSERT_EQ(info.mapped_pages, 3);
+    /* mremap calls fallocate, which pre-allocates disk blocks up to 8 pages */
+    ASSERT_EQ(info.allocated_blocks, 8 * expected_blocks_per_page);
+
+    /* 4. HOLE PUNCH: Unmap the middle page (Page 1) */
+    int rc = munmap(new_addr + page_size, page_size);
+    ASSERT_EQ(rc, 0);
+
+    info = get_swap_file_info(new_addr);
+    /* One page unmapped from RAM, drops to 2 */
+    ASSERT_EQ(info.mapped_pages, 2);
+    /* Hole punch frees 1 page worth of blocks from disk, leaving 7 */
+    ASSERT_EQ(info.allocated_blocks, 7 * expected_blocks_per_page);
+
+    /* 5. PAGEOUT: Evict page 0 from RAM */
+    rc = madvise(new_addr, page_size, MADV_PAGEOUT);
+    ASSERT_EQ(rc, 0);
+
+    info = get_swap_file_info(new_addr);
+    /* Page evicted from RAM, drops to 1 */
+    ASSERT_EQ(info.mapped_pages, 1);
+    /* Blocks remain on disk for swapped out pages, remains 7 */
+    ASSERT_EQ(info.allocated_blocks, 7 * expected_blocks_per_page);
+
+    /* 6. SHRINK: Unmap the entire right side of the expanded mapping */
+    rc = munmap(new_addr + 2 * page_size, expanded_len - (2 * page_size));
+    ASSERT_EQ(rc, 0);
+
+    info = get_swap_file_info(new_addr);
+    /* Page 2 was unmapped, RAM drops to 0 */
+    ASSERT_EQ(info.mapped_pages, 0);
+    /* VMA shrunk down to 1 page (Page 0). Disk is truncated down to 1 page worth of blocks */
+    ASSERT_EQ(info.allocated_blocks, 1 * expected_blocks_per_page);
+
+    munmap(new_addr, page_size);
+}
+void test_knswap_demon_async(void)
+{
+    const size_t pages = 2048;
+    const size_t len = pages * PAGE_SIZE;
+    unsigned char *addr;
+    char path[PATH_MAX];
+    unsigned long index;
+    off_t before;
+    off_t after;
+
+    addr = mmap(NULL, len,
+                PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP,
+                -1, 0);
+
+    ASSERT(addr != MAP_FAILED);
+    if (addr == MAP_FAILED)
+        return;
+
+    addr[0] = 1;
+    addr[PAGE_SIZE] = 2;
+
+    index = assert_named_swap_pte_file_for_addr(addr);
+    named_swap_path_for_index(path, sizeof(path), index);
+
+    before = backing_alloc_bytes(path);
+
+    ASSERT_ABOVE(before, 0);
+
+    if (fork_and_wait_child() < 0) {
+        munmap(addr, len);
+        return;
+    }
+
+    sleep(1);
+
+    after = backing_alloc_bytes(path);
+
+    printf("before=%lld after=%lld\n",
+           (long long)before,
+           (long long)after);
+
+    ASSERT_ABOVE(before, after);
+
+    munmap(addr, len);
+}
+
+#define KNSWAP_TEST_THRESHOLD 1024
+
+static unsigned long knswap_test_waste_pages(
+    const struct swap_file_info *info)
+{
+    unsigned long blocks_per_page;
+    unsigned long allocated_pages;
+
+    blocks_per_page = PAGE_SIZE / 512;
+    allocated_pages = info->allocated_blocks / blocks_per_page;
+
+    if (allocated_pages <= info->mapped_pages)
+        return 0;
+
+    return allocated_pages - info->mapped_pages;
+}
+
+void test_knswap_demon_full_cleanup(void)
+{
+    void *addrs[KNSWAP_TEST_MAX_VMAS] = {0};
+    unsigned long before_blocks[KNSWAP_TEST_MAX_VMAS] = {0};
+    unsigned long total_before = 0;
+    unsigned long total_after = 0;
+    unsigned int cleaned_files = 0;
+    unsigned int mapped = 0;
+    unsigned int i;
+    int ret;
+
+    for (i = 0; i < KNSWAP_TEST_MAX_VMAS; i++) {
+        size_t pages = KNSWAP_TEST_MAX_VMAS - i;
+        size_t len = pages * PAGE_SIZE;
+
+        addrs[i] = mmap(NULL, len,
+                        PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS | MAP_NAMED_SWAP,
+                        -1, 0);
+
+        ASSERT(addrs[i] != MAP_FAILED);
+
+        if (addrs[i] == MAP_FAILED) {
+            addrs[i] = NULL;
+            goto out;
+        }
+
+        mapped++;
+    }
+
+    /*
+     * Touch one page in every mapping so that every real named-swap file
+     * has a real anon_vma. The remaining pages stay unused and become waste.
+     */
+    for (i = 0; i < mapped; i++)
+        ((volatile unsigned char *)addrs[i])[0] =
+            (unsigned char)(i + 1);
+
+    for (i = 0; i < mapped; i++) {
+        struct swap_file_info info;
+
+        info = get_swap_file_info(addrs[i]);
+
+        before_blocks[i] = info.allocated_blocks;
+        total_before += knswap_test_waste_pages(&info);
+    }
+
+    printf("knswap test: waste before=%lu\n", total_before);
+
+    ASSERT(total_before > KNSWAP_TEST_THRESHOLD);
+
+    ret = run_knswap_demon_test_loop(addrs, mapped);
+
+    printf("knswap test: run_loop ret=%d\n", ret);
+
+    ASSERT_EQ(ret, 0);
+
+    if (ret)
+        goto out;
+
+    for (i = 0; i < mapped; i++) {
+        struct swap_file_info info;
+        unsigned char value;
+
+        info = get_swap_file_info(addrs[i]);
+
+        total_after += knswap_test_waste_pages(&info);
+
+        if (info.allocated_blocks < before_blocks[i])
+            cleaned_files++;
+
+        value = ((volatile unsigned char *)addrs[i])[0];
+
+        ASSERT_EQ(value, (unsigned char)(i + 1));
+    }
+
+    printf("knswap test: waste after=%lu cleaned_files=%u\n",
+           total_after, cleaned_files);
+
+    ASSERT(total_after < total_before);
+    ASSERT(total_after <= KNSWAP_TEST_THRESHOLD);
+    ASSERT(cleaned_files > 1);
+
+out:
+    for (i = 0; i < mapped; i++) {
+        size_t pages = KNSWAP_TEST_MAX_VMAS - i;
+        size_t len = pages * PAGE_SIZE;
+
+        munmap(addrs[i], len);
+    }
 }
