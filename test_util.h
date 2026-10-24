@@ -14,6 +14,7 @@
 #define NAMED_SWAP_MODE_SYSCTL "/proc/sys/vm/named_swap_mode"
 #define NAMED_SWAP_DEFAULT_ROOT "/.named_swap"
 #define NAMED_SWAP_DEFAULT_FS_ROOT "/.named_swap"
+#define START_WASTE_CLEAN_SYSCALL 467
 
 struct vma_info_args {
     void *virtual_address;
@@ -75,6 +76,7 @@ struct swap_file_info {
     unsigned long size;
     unsigned long file_size;   // NEW: Entire backing file size
     unsigned long allocated_blocks; /* NEW: Extracted from i_blocks */
+    unsigned long mapped_pages;
 };
 
 struct page_prot_args {
@@ -96,6 +98,9 @@ struct page_prot_args {
 #define IOCTL_NAMED_SWAP_ALIAS_COUNT _IOWR('s', 0x11, struct named_swap_alias_count_args)
 #define IOCTL_GET_PAGE_PROT _IOR('s', 0x12, struct page_prot_args)
 #define IOCTL_GET_PTE_SWAP_FILE_PATH _IOWR('s', 0x13, struct swap_file_info)
+
+
+
 struct folio_get_mapcount_args {
     void *virtual_address;
     unsigned long mapcount;
@@ -129,6 +134,8 @@ unsigned long named_swap_pool_usage(void);
 int signal_fd(int fd);
 int wait_fd(int fd);
 int check_vma_in_maps(unsigned char *expected_start, unsigned char *expected_end);
+long start_waste_clean_sync(void);
+
 
 pid_t start_ftrace(void);
 void stop_ftrace(char *test_name, pid_t pid);
