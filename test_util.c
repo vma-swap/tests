@@ -8,6 +8,7 @@
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <time.h>
 
 int signal_fd(int fd) {
     char byte = 1;
@@ -393,4 +394,43 @@ int check_vma_in_maps(unsigned char *expected_start, unsigned char *expected_end
     
     fclose(fp);
     return found;
+}
+
+long start_waste_clean_sync(void)
+{
+    return syscall(START_WASTE_CLEAN_SYSCALL);
+}
+int wait_for_allocated_blocks_drop(unsigned char *addr,
+                                   unsigned long initial_blocks,
+                                   int timeout_ms)
+{
+    struct timespec sleep_interval = {
+        .tv_sec = 0,
+        .tv_nsec = 50 * 1000 * 1000
+    };
+    int elapsed_ms = 0;
+
+    while (elapsed_ms < timeout_ms) {
+        struct swap_file_info info = get_swap_file_info(addr);
+
+        if (info.allocated_blocks < initial_blocks)
+            return 1;
+
+        nanosleep(&sleep_interval, NULL);
+        elapsed_ms += 50;
+    }
+
+    return 0;
+}
+
+unsigned long swap_file_waste_pages(const struct swap_file_info *info)
+{
+    unsigned long blocks_per_page = PAGE_SIZE / 512;
+    unsigned long allocated_pages =
+        info->allocated_blocks / blocks_per_page;
+
+    if (allocated_pages <= info->mapped_pages)
+        return 0;
+
+    return allocated_pages - info->mapped_pages;
 }

@@ -10,6 +10,8 @@
 #define VM_MEMORY (130 * (1024 * 1024))
 #define PAGEOUT_TEST_SIZE (8 * 1024 * 1024)
 #define PAGEOUT_FILE_PATH "/tmp/named_swap_pageout_test.dat"
+#define WASTE_CLEAN_EDGE_VMAS 99
+#define WASTE_CLEAN_THRESHOLD 1024
 
 void dirty_pageout_mapping(unsigned char *addr, size_t len);
 unsigned long read_pageout_mapping(unsigned char *addr, size_t len);

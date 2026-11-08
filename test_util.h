@@ -14,6 +14,8 @@
 #define NAMED_SWAP_MODE_SYSCTL "/proc/sys/vm/named_swap_mode"
 #define NAMED_SWAP_DEFAULT_ROOT "/.named_swap"
 #define NAMED_SWAP_DEFAULT_FS_ROOT "/.named_swap"
+#define START_WASTE_CLEAN_SYSCALL 467
+#define PAGE_SIZE 4096
 
 struct vma_info_args {
     void *virtual_address;
@@ -75,6 +77,7 @@ struct swap_file_info {
     unsigned long size;
     unsigned long file_size;   // NEW: Entire backing file size
     unsigned long allocated_blocks; /* NEW: Extracted from i_blocks */
+    unsigned long mapped_pages;
 };
 
 struct page_prot_args {
@@ -110,6 +113,8 @@ struct anon_vma_info_args get_anon_vma_info(void *addr);
 struct anon_vma_info_args get_anon_vma_info_from_vma(void *addr);
 unsigned int count_rmap_vmas(void *addr);
 struct swap_file_info get_swap_file_info(void *addr);
+int wait_for_allocated_blocks_drop(unsigned char *addr,unsigned long initial_blocks,int timeout_ms);
+unsigned long swap_file_waste_pages(const struct swap_file_info *info);
 struct swap_file_info get_pte_swap_file_info(void *addr);
 struct page_prot_args get_page_prot(void *addr);
 struct folio_info_args get_folio_info(void *addr);
@@ -129,7 +134,7 @@ unsigned long named_swap_pool_usage(void);
 int signal_fd(int fd);
 int wait_fd(int fd);
 int check_vma_in_maps(unsigned char *expected_start, unsigned char *expected_end);
-
+long start_waste_clean_sync(void);
 pid_t start_ftrace(void);
 void stop_ftrace(char *test_name, pid_t pid);
 
